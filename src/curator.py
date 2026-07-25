@@ -145,7 +145,12 @@ def fetch_arxiv(limit: int = 5) -> List[Article]:
 def fetch_reddit(limit: int = 5, subreddits: Optional[List[str]] = None) -> List[Article]:
     """Fetches trending posts from specified subreddits using their RSS feeds."""
     if subreddits is None:
-        subreddits = ["MachineLearning", "datascience"]
+        subreddits = [
+            "MachineLearning",
+            "datascience",
+            "ArtificialIntelligence",
+            "softwarearchitecture",
+        ]
     articles = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
