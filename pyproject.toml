@@ -1,0 +1,30 @@
+[project]
+name = "ai-linkedin-automation"
+version = "1.0.0"
+description = "Secure autonomous Telegram Bot for AI LinkedIn post curation, drafting, and social card rendering."
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import sorting)
+    "N",   # pep8-naming
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+]
+ignore = ["E501", "F841"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

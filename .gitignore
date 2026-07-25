@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Local configuration files
+.env
+
+# Database file
+*.db
+history.db
+
+# Generated output assets
+posts/
+!posts/cli_test_graphic.png  # Keep the test graphic as a visual demo if wanted, or ignore all
+posts/*
