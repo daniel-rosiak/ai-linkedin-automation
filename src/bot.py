@@ -2,6 +2,7 @@ import os
 import re
 import sys
 from functools import wraps
+from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -15,7 +16,7 @@ from telegram.ext import (
 
 import src.config as config
 import src.db.database as db
-from src.curator import curate_all
+from src.curator import SOURCE_DISPLAY_NAMES, curate_all, resolve_source
 from src.llm.factory import get_llm_provider
 from src.renderer import render_graphic
 
@@ -48,15 +49,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sends welcome message with instructions."""
     welcome_text = (
         "🤖 **LinkedIn Post Generator Bot** is online!\n\n"
-        "Available Commands:\n"
-        "- `/generate` - Fetch fresh daily technical articles and generate post proposals on demand.\n"
+        "- `/generate [source] [count]` - Generate proposals on demand (e.g. `/generate shopify 2`, `/generate 5`, `/generate help`).\n"
         "- `/preference <your guidance rules here>` - Set overall high-level style/topic rules (e.g. 'focused strictly on software architecture').\n"
         "- `/preference` - View your active global preference rules.\n"
         "- `/example <paste one of your past posts here>` - Train the AI to mimic your exact personal writing tone, line-spacing, and messaging style.\n"
         "- `/example` - View your saved writing samples with their unique IDs.\n"
         "- `/remove_example <id>` - Remove a specific writing sample by its unique database ID.\n"
         "- `/clear_examples` - Reset and delete all writing samples.\n"
-        "- `/history` or `/approved` - View your recently approved creations and instantly retrieve their copywriting/visual graphic assets.\n\n"
+        "- `/history [status] [limit]` - View proposals ordered by date desc across all or specific statuses (`approved`, `rejected`, `pending`, `skipped`, `posted`, `all`).\n"
+        "- `/approved [limit]` - Shortcut for `/history approved` to view approved creations and retrieve assets.\n\n"
         "Only you (the authorized user) can interact with this bot."
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
@@ -171,27 +172,156 @@ async def clear_examples_command(update: Update, context: ContextTypes.DEFAULT_T
 
 
 # 2.7 History Command
+VALID_HISTORY_STATUSES = {
+    "all": "all",
+    "approved": "approved",
+    "approve": "approved",
+    "rejected": "rejected",
+    "reject": "rejected",
+    "pending": "pending",
+    "skipped": "skipped",
+    "skip": "skipped",
+    "posted": "posted",
+    "post": "posted",
+}
+
+STATUS_DISPLAY_TITLES = {
+    "approved": "Approved Posts",
+    "rejected": "Rejected Proposals",
+    "pending": "Pending Proposals",
+    "skipped": "Skipped Proposals",
+    "posted": "Posted Items",
+    "all": "Proposal Timeline",
+}
+
+
+def parse_history_args(args: list[str]) -> tuple[Optional[str], int, Optional[str]]:
+    """
+    Parses arguments for /history command.
+    Accepts status (approved, rejected, pending, skipped, posted, all) and/or item count limit (1-50).
+    Returns (status, limit, error_or_action_str).
+    """
+    if not args:
+        return None, 10, None
+
+    if any(a.lower() in ("help", "--help", "-h", "statuses", "list") for a in args):
+        return None, 0, "HELP"
+
+    raw_tokens = []
+    limit = 10
+
+    i = 0
+    while i < len(args):
+        arg = args[i].strip()
+        lower = arg.lower()
+        if lower in ("--limit", "-l", "-n", "--count", "-c") and i + 1 < len(args):
+            try:
+                limit = int(args[i + 1])
+                i += 2
+                continue
+            except ValueError:
+                return None, 0, f"Invalid number for limit: `{args[i + 1]}`"
+        elif lower.startswith("limit=") or lower.startswith("count="):
+            try:
+                limit = int(arg.split("=", 1)[1])
+                i += 1
+                continue
+            except ValueError:
+                return None, 0, f"Invalid number for limit: `{arg}`"
+        elif lower in ("--status", "-s") and i + 1 < len(args):
+            raw_tokens.append(args[i + 1])
+            i += 2
+            continue
+        elif lower.startswith("status="):
+            raw_tokens.append(arg.split("=", 1)[1])
+            i += 1
+            continue
+        else:
+            raw_tokens.append(arg)
+            i += 1
+
+    status = None
+    for token in raw_tokens:
+        clean = token.strip().lower().lstrip("/")
+        if clean.isdigit():
+            limit = int(clean)
+        elif clean.startswith("-") and clean[1:].isdigit():
+            return None, 0, "Limit must be between 1 and 50."
+        else:
+            if clean in VALID_HISTORY_STATUSES:
+                resolved = VALID_HISTORY_STATUSES[clean]
+                status = None if resolved == "all" else resolved
+            else:
+                return None, 0, f"Unknown status `{token}`."
+
+    if limit < 1 or limit > 50:
+        return None, 0, "Limit must be between 1 and 50."
+
+    return status, limit, None
+
+
+def format_history_help() -> str:
+    """Builds a formatted guide explaining /history status arguments and options."""
+    return (
+        "📖 **/history Command Options**\n\n"
+        "View proposals ordered chronologically by date descending across all or filtered statuses:\n\n"
+        "**Usage:**\n"
+        "• `/history` — View last 10 proposals across all statuses\n"
+        "• `/history approved` — View approved posts (also `/history approved 5`)\n"
+        "• `/history rejected` — View rejected proposals\n"
+        "• `/history pending` — View pending proposals\n"
+        "• `/history skipped` — View skipped proposals\n"
+        "• `/history posted` — View published posts\n"
+        "• `/history all` — View across all statuses\n"
+        "• `/history <count>` — e.g. `/history 20` (1–50 items)\n\n"
+        "💡 *You can also specify both status and count: e.g. `/history approved 5`.*"
+    )
+
+
 @restricted
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lists recent proposals across all processed statuses, presenting each as a fully interactive card board."""
-    db.initialize_db()
-    history = db.get_all_history(limit=10)
+    """Lists recent proposals across all or filtered statuses, presenting each as a fully interactive card board."""
+    raw_args = context.args if isinstance(getattr(context, "args", None), list) else []
+    status, limit, err = parse_history_args(raw_args)
 
-    if not history:
-        await update.message.reply_text(
-            "📚 **Your Proposal History is empty.**\n\n"
-            "Run `/generate` to curate articles and make decisions. Approved, rejected, and skipped items will appear in your timeline!",
-            parse_mode="Markdown",
-        )
+    if err == "HELP":
+        await update.message.reply_text(format_history_help(), parse_mode="Markdown")
         return
 
-    await update.message.reply_text("📚 **Your Recent Proposal Timeline (Last 10 actions - fully interactive):**")
+    if err:
+        msg = f"⚠️ {err}\n\nType `/history help` to view all available statuses and usage options."
+        await update.message.reply_text(msg, parse_mode="Markdown")
+        return
+
+    db.initialize_db()
+    if status is not None:
+        history = db.get_all_history(limit=limit, status=status)
+    else:
+        history = db.get_all_history(limit=limit)
+
+    if not history:
+        if status:
+            empty_msg = (
+                f"📚 **No {status} proposals found yet.**\n\n"
+                "Run `/generate` to curate articles and make decisions!"
+            )
+        else:
+            empty_msg = (
+                "📚 **Your Proposal History is empty.**\n\n"
+                "Run `/generate` to curate articles and make decisions. Approved, rejected, and skipped items will appear in your timeline!"
+            )
+        await update.message.reply_text(empty_msg, parse_mode="Markdown")
+        return
+
+    title_part = STATUS_DISPLAY_TITLES.get(status, "Proposal Timeline") if status else "Proposal Timeline"
+    await update.message.reply_text(f"📚 **Your Recent {title_part} (Last {len(history)} items - ordered by date):**")
 
     status_emojis = {
         "approved": "🟢 Approved",
         "rejected": "🔴 Rejected",
         "skipped": "⚪ Skipped",
         "pending": "⏳ Pending",
+        "posted": "🚀 Posted",
     }
 
     for item in history:
@@ -258,8 +388,11 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @restricted
 async def approved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lists recent approved posts as interactive cards, allowing asset retrieval, edits, or re-decisions."""
-    db.initialize_db()
-    approved = db.get_history("approved", limit=10)
+    limit = 10
+    args = getattr(context, "args", None)
+    if isinstance(args, list) and args and args[0].isdigit():
+        limit = min(max(1, int(args[0])), 50)
+    approved = db.get_history("approved", limit=limit)
 
     if not approved:
         await update.message.reply_text(
@@ -300,13 +433,130 @@ async def approved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+def parse_generate_args(args: list[str]):
+    """
+    Parses arguments for /generate command.
+    Returns (sources_list, count, error_or_action_str).
+    If error_or_action_str is 'HELP', caller should display help.
+    If error_or_action_str is another string, caller should display error.
+    """
+    if not args:
+        return None, 3, None
+
+    # Check for help command or flag
+    if any(a.lower() in ("help", "--help", "-h", "sources", "list") for a in args):
+        return None, 0, "HELP"
+
+    raw_tokens = []
+    count = 3
+
+    i = 0
+    while i < len(args):
+        arg = args[i].strip()
+        lower = arg.lower()
+        if lower in ("--count", "-c", "-n") and i + 1 < len(args):
+            try:
+                count = int(args[i + 1])
+                i += 2
+                continue
+            except ValueError:
+                return None, 0, f"Invalid number for count: `{args[i + 1]}`"
+        elif lower.startswith("count="):
+            try:
+                count = int(arg.split("=", 1)[1])
+                i += 1
+                continue
+            except ValueError:
+                return None, 0, f"Invalid number for count: `{arg}`"
+        elif lower in ("--source", "-s") and i + 1 < len(args):
+            raw_tokens.extend(args[i + 1].split(","))
+            i += 2
+            continue
+        elif lower.startswith("source="):
+            raw_tokens.extend(arg.split("=", 1)[1].split(","))
+            i += 1
+            continue
+        else:
+            raw_tokens.append(arg)
+            i += 1
+
+    remaining_tokens = []
+    for token in raw_tokens:
+        if token.isdigit():
+            count = int(token)
+        elif token.startswith("-") and token[1:].isdigit():
+            return None, 0, "Number of items must be between 1 and 10."
+        else:
+            remaining_tokens.append(token)
+
+    if count < 1 or count > 10:
+        return None, 0, "Number of items must be between 1 and 10."
+
+    if not remaining_tokens:
+        return None, count, None
+
+    sources = []
+    combined = " ".join(remaining_tokens)
+    parts = [p.strip() for p in combined.split(",") if p.strip()]
+    for p in parts:
+        resolved = resolve_source(p)
+        if not resolved:
+            subparts = p.split()
+            sub_resolved = [resolve_source(sp) for sp in subparts if resolve_source(sp)]
+            if sub_resolved:
+                for sr in sub_resolved:
+                    if sr not in sources:
+                        sources.append(sr)
+                continue
+            return None, 0, f"Unknown source `{p}`."
+        if resolved not in sources:
+            sources.append(resolved)
+
+    return sources, count, None
+
+
+def format_generate_help() -> str:
+    """Builds a formatted guide explaining how to target sources and specify counts."""
+    sources_text = "\n".join(
+        f"• `{key}` — {label}" for key, label in SOURCE_DISPLAY_NAMES.items()
+    )
+    return (
+        "📖 **/generate Command Options**\n\n"
+        "Generate post proposals targeting specific sources and/or specify the number of items:\n\n"
+        "**Usage:**\n"
+        "• `/generate` — Curates from all sources (3 proposals by default)\n"
+        "• `/generate <count>` — e.g. `/generate 5` (1–10 items)\n"
+        "• `/generate <source>` — e.g. `/generate shopify`\n"
+        "• `/generate <source> <count>` — e.g. `/generate shopify 2` or `/generate 2 shopify`\n"
+        "• `/generate <source1,source2> <count>` — e.g. `/generate netflix,shopify 4`\n"
+        "• `/generate --source shopify --count 2`\n\n"
+        f"**Available Sources:**\n{sources_text}\n\n"
+        "💡 *Aliases supported:* `hn`, `hackernews`, `gh`, `trending`, `papers`, `netflix`, `shopify`."
+    )
+
+
 # 3. Generate proposals command
 @restricted
 async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Curates tech news and uses LLM to generate post proposals with inline buttons."""
-    status_msg = await update.message.reply_text(
-        "🔍 Curating tech news and papers from hacker news, GitHub, ArXiv, and Reddit..."
-    )
+    sources, count, err = parse_generate_args(context.args or [])
+
+    if err == "HELP":
+        await update.message.reply_text(format_generate_help(), parse_mode="Markdown")
+        return
+
+    if err:
+        msg = f"⚠️ {err}\n\nType `/generate help` to see available sources and usage options."
+        await update.message.reply_text(msg, parse_mode="Markdown")
+        return
+
+    if sources:
+        names = [SOURCE_DISPLAY_NAMES.get(s, s) for s in sources]
+        status_text = f"🔍 Curating fresh articles from {', '.join(names)} ({count} items)..."
+    else:
+        status_text = f"🔍 Curating tech news and engineering blogs ({count} items)..."
+
+    status_msg = await update.message.reply_text(status_text)
 
     try:
         # Step 1: Initialize DB & Load histories
@@ -316,14 +566,16 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         global_feedback = db.get_preference("global_feedback")
 
         # Step 2: Run Curation
-        articles = curate_all(limit_per_source=2)
+        limit_per_source = max(4, count * 2) if sources else max(2, (count + 7) // 8 + 1)
+        articles = curate_all(limit_per_source=limit_per_source, sources=sources)
         if not articles:
+            source_suffix = f" from {', '.join(names)}" if sources else " for today"
             await status_msg.edit_text(
-                "✅ All curated articles for today have already been processed and presented! Try again later."
+                f"✅ All curated articles{source_suffix} have already been processed and presented! Try again later."
             )
             return
 
-        await status_msg.edit_text("🤖 Initializing LLM provider and generating proposals...")
+        await status_msg.edit_text(f"🤖 Initializing LLM provider and generating {count} proposals...")
 
         # Step 3: Call LLM Factory
         provider = get_llm_provider()
@@ -332,6 +584,7 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             approved_history=approved_history,
             rejected_history=rejected_history,
             global_feedback=global_feedback,
+            count=count,
         )
 
         if not proposals:
@@ -432,7 +685,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             if proposal.completed_copy:
                 post_text = proposal.completed_copy
             else:
-                style_examples = db.get_style_examples(limit=3)
+                style_examples = db.get_style_examples(limit=5)
                 provider = get_llm_provider()
                 post_text = provider.generate_post_text(proposal, style_examples=style_examples)
                 # Save the newly generated text copy inside DB for subsequent fast retrievals
@@ -443,6 +696,10 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 "hacker_news": "Hacker News",
                 "github_trending": "GitHub Trending",
                 "reddit": "Reddit",
+                "lobsters": "Lobsters",
+                "infoq": "InfoQ",
+                "netflix_tech": "Netflix Tech",
+                "shopify_blog": "Shopify Engineering",
             }
             category_str = source_map.get(proposal.source.lower(), proposal.source.replace("_", " ").title())
 
@@ -493,8 +750,8 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         )
 
         try:
-            # 1. Load personal style samples
-            style_examples = db.get_style_examples(limit=3)
+            # 1. Load personal style samples (up to 5 freshest)
+            style_examples = db.get_style_examples(limit=5)
 
             # 2. Instantiate provider & generate copywriting
             provider = get_llm_provider()
@@ -506,6 +763,10 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 "hacker_news": "Hacker News",
                 "github_trending": "GitHub Trending",
                 "reddit": "Reddit",
+                "lobsters": "Lobsters",
+                "infoq": "InfoQ",
+                "netflix_tech": "Netflix Tech",
+                "shopify_blog": "Shopify Engineering",
             }
             category_str = source_map.get(proposal.source.lower(), proposal.source.replace("_", " ").title())
 
@@ -575,7 +836,7 @@ async def handle_text_feedback(update: Update, context: ContextTypes.DEFAULT_TYP
             f"⏳ **Refinement received:** '{feedback_text}'\n🤖 Refining copywriting using local AI..."
         )
         try:
-            style_examples = db.get_style_examples(limit=3)
+            style_examples = db.get_style_examples(limit=5)
             current_copy = proposal.completed_copy or ""
 
             provider = get_llm_provider()

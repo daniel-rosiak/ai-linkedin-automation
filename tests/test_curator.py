@@ -12,6 +12,8 @@ from src.curator import (
     fetch_lobsters,
     fetch_netflix_tech,
     fetch_reddit,
+    fetch_shopify_blog,
+    resolve_source,
 )
 from src.db.models import Article, Proposal
 
@@ -186,6 +188,7 @@ def test_curate_all_success():
         patch("src.curator.fetch_lobsters", return_value=[]),
         patch("src.curator.fetch_infoq", return_value=[]),
         patch("src.curator.fetch_netflix_tech", return_value=[]),
+        patch("src.curator.fetch_shopify_blog", return_value=[]),
     ):
         curated = curate_all(limit_per_source=1)
 
@@ -272,3 +275,76 @@ def test_fetch_netflix_tech_success():
         assert articles[0].source == "netflix_tech"
         assert "cassandra workloads" in articles[0].summary
         assert articles[0].date == "Thu, 23 Jul 2026 10:00:00 GMT"
+
+
+def test_fetch_shopify_blog_success():
+    mock_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <entry>
+        <title>Helix: The internal tool powering our Shopify app's native migration</title>
+        <id>https://shopify.engineering/helix</id>
+        <link rel="alternate" type="text/html" href="https://shopify.engineering/helix" />
+        <published>2026-09-21T21:12:33.000Z</published>
+        <summary>We built Helix to help LLMs rebuild the Shopify app in Swift and Kotlin, using small checkpoints and strict quality gates.</summary>
+      </entry>
+    </feed>
+    """
+    mock_response = Mock()
+    mock_response.text = mock_xml
+    mock_response.status_code = 200
+
+    with patch("requests.get", return_value=mock_response):
+        articles = fetch_shopify_blog(limit=1)
+        assert len(articles) == 1
+        assert articles[0].title == "Helix: The internal tool powering our Shopify app's native migration"
+        assert articles[0].url == "https://shopify.engineering/helix"
+        assert articles[0].source == "shopify_blog"
+        assert "Helix" in articles[0].summary
+        assert articles[0].date == "2026-09-21T21:12:33.000Z"
+
+
+def test_resolve_source():
+    assert resolve_source("shopify") == "shopify_blog"
+    assert resolve_source("shopify_blog") == "shopify_blog"
+    assert resolve_source("Shopify-Engineering") == "shopify_blog"
+    assert resolve_source("netflix") == "netflix_tech"
+    assert resolve_source("hn") == "hacker_news"
+    assert resolve_source("github") == "github_trending"
+    assert resolve_source("arxiv") == "arxiv"
+    assert resolve_source("reddit") == "reddit"
+    assert resolve_source("lobsters") == "lobsters"
+    assert resolve_source("infoq") == "infoq"
+    assert resolve_source("unknown_xyz") is None
+    assert resolve_source("") is None
+
+
+def test_curate_all_with_specific_sources():
+    mock_shopify = [
+        Article(
+            title="Shopify High Scale",
+            url="https://shopify.engineering/high-scale",
+            source="shopify_blog",
+            summary="Shopify blog summary",
+        )
+    ]
+    mock_netflix = [
+        Article(
+            title="Netflix CDN",
+            url="https://netflixtechblog.com/cdn",
+            source="netflix_tech",
+            summary="Netflix tech summary",
+        )
+    ]
+
+    with (
+        patch("src.curator.fetch_shopify_blog", return_value=mock_shopify) as p_shopify,
+        patch("src.curator.fetch_netflix_tech", return_value=mock_netflix) as p_netflix,
+        patch("src.curator.fetch_hacker_news") as p_hn,
+    ):
+        curated = curate_all(limit_per_source=2, sources=["shopify", "netflix"])
+        assert len(curated) == 2
+        p_shopify.assert_called_once_with(limit=2)
+        p_netflix.assert_called_once_with(limit=2)
+        p_hn.assert_not_called()
+
+

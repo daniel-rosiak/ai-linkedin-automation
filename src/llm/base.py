@@ -12,8 +12,9 @@ class BaseProvider(ABC):
         approved_history: List[Proposal] = None,
         rejected_history: List[Proposal] = None,
         global_feedback: str = None,
+        count: int = 3,
     ) -> List[Proposal]:
-        """Generates 3-5 distinct post proposals from curated articles and history feedback."""
+        """Generates distinct post proposals from curated articles and history feedback."""
         pass
 
     @abstractmethod

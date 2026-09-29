@@ -147,8 +147,8 @@ def add_style_example(content: str, type: str = "manual", proposal_id: Optional[
         conn.commit()
 
 
-def get_style_examples(limit: int = 3) -> List[str]:
-    """Retrieves recent raw manual style training post examples."""
+def get_style_examples(limit: int = 5) -> List[str]:
+    """Retrieves recent raw manual style training post examples (up to max freshest limit)."""
     with get_db_connection() as conn:
         cursor = conn.execute(
             "SELECT content FROM style_examples WHERE type = 'manual' ORDER BY created_at DESC, id DESC LIMIT ?",
@@ -312,14 +312,14 @@ def update_proposal_feedback(proposal_id: int, feedback: str):
 
 
 def get_history(status: str, limit: int = 10) -> List[Proposal]:
-    """Retrieves recent proposals with a given status to build context for LLM learning."""
+    """Retrieves recent proposals with a given status ordered chronologically by date descending."""
     with get_db_connection() as conn:
         cursor = conn.execute(
             """
             SELECT id, url, title, source, summary, proposed_title, proposed_angle, status, created_at, feedback, completed_copy
             FROM proposals
             WHERE status = ?
-            ORDER BY updated_at DESC, id DESC
+            ORDER BY created_at DESC, id DESC
             LIMIT ?
         """,
             (status, limit),
@@ -355,7 +355,7 @@ def get_positive_history(limit: int = 10) -> List[Proposal]:
             SELECT id, url, title, source, summary, proposed_title, proposed_angle, status, created_at, feedback, completed_copy
             FROM proposals
             WHERE status IN ('approved', 'posted')
-            ORDER BY updated_at DESC, id DESC
+            ORDER BY created_at DESC, id DESC
             LIMIT ?
         """,
             (limit,),
@@ -383,27 +383,30 @@ def get_positive_history(limit: int = 10) -> List[Proposal]:
         return proposals
 
 
-def get_all_history(limit: int = 10) -> List[Proposal]:
-    """Retrieves the most recent proposals across all statuses, grouped by status priority and ordered chronologically."""
+def get_all_history(limit: int = 10, status: Optional[str] = None) -> List[Proposal]:
+    """Retrieves recent proposals across all or specific statuses ordered chronologically by date descending."""
     with get_db_connection() as conn:
-        cursor = conn.execute(
-            """
-            SELECT id, url, title, source, summary, proposed_title, proposed_angle, status, created_at, feedback, completed_copy
-            FROM proposals
-            ORDER BY
-                CASE status
-                    WHEN 'approved' THEN 1
-                    WHEN 'posted' THEN 2
-                    WHEN 'rejected' THEN 3
-                    WHEN 'skipped' THEN 4
-                    ELSE 5
-                END ASC,
-                updated_at DESC,
-                id DESC
-            LIMIT ?
-        """,
-            (limit,),
-        )
+        if status and status.lower() != "all":
+            cursor = conn.execute(
+                """
+                SELECT id, url, title, source, summary, proposed_title, proposed_angle, status, created_at, feedback, completed_copy
+                FROM proposals
+                WHERE status = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+            """,
+                (status.lower(), limit),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                SELECT id, url, title, source, summary, proposed_title, proposed_angle, status, created_at, feedback, completed_copy
+                FROM proposals
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+            """,
+                (limit,),
+            )
         rows = cursor.fetchall()
 
         proposals = []

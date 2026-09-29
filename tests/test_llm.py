@@ -224,3 +224,72 @@ def test_ollama_regenerate_proposal(mocker):
     assert regen.proposed_angle == "Regenerated Ollama Angle"
     assert regen.feedback == "Remove references to Rust"
     assert regen.status == "pending"
+
+
+def test_build_proposal_prompt_custom_count():
+    articles = [Article(title="T1", url="https://url1.com", source="hn", summary="S1")]
+    prompt_1 = build_proposal_prompt(articles, count=1)
+    assert "propose exactly 1 separate, distinct" in prompt_1
+    assert "containing a 'proposals' array with exactly 1 distinct proposal object(s)" in prompt_1
+
+    prompt_5 = build_proposal_prompt(articles, count=5)
+    assert "propose exactly 5 separate, distinct" in prompt_5
+    assert "containing a 'proposals' array with exactly 5 distinct proposal object(s)" in prompt_5
+
+
+def test_gemini_generate_proposals_with_count(mocker):
+    mock_client_class = mocker.patch("google.genai.Client")
+    mock_client = mock_client_class.return_value
+
+    mock_response = mocker.Mock()
+    mock_response.text = """
+    {
+      "proposals": [
+        {"proposed_title": "P1", "proposed_angle": "A1", "url": "https://url1.com"},
+        {"proposed_title": "P2", "proposed_angle": "A2", "url": "https://url2.com"},
+        {"proposed_title": "P3", "proposed_angle": "A3", "url": "https://url3.com"}
+      ]
+    }
+    """
+    mock_client.models.generate_content.return_value = mock_response
+
+    provider = GeminiProvider(api_key="mock_key")
+    articles = [
+        Article(title="T1", url="https://url1.com", source="hn", summary="S1"),
+        Article(title="T2", url="https://url2.com", source="hn", summary="S2"),
+    ]
+
+    # Request count=2, model returned 3 -> should be sliced to 2
+    proposals = provider.generate_proposals(articles, count=2)
+    assert len(proposals) == 2
+    assert proposals[0].proposed_title == "P1"
+    assert proposals[1].proposed_title == "P2"
+
+
+def test_ollama_generate_proposals_with_count(mocker):
+    mock_ollama_client = mocker.patch("ollama.Client")
+    mock_instance = mock_ollama_client.return_value
+
+    mock_response = {
+        "message": {
+            "content": """
+            {
+              "proposals": [
+                {"proposed_title": "P1", "proposed_angle": "A1", "url": "https://url1.com"},
+                {"proposed_title": "P2", "proposed_angle": "A2", "url": "https://url2.com"}
+              ]
+            }
+            """
+        }
+    }
+    mock_instance.chat.return_value = mock_response
+
+    provider = OllamaProvider(host="http://localhost:11434", model="llama3")
+    articles = [
+        Article(title="T1", url="https://url1.com", source="hn", summary="S1"),
+    ]
+
+    proposals = provider.generate_proposals(articles, count=1)
+    assert len(proposals) == 1
+    assert proposals[0].proposed_title == "P1"
+

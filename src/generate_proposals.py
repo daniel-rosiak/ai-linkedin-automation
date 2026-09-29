@@ -1,4 +1,4 @@
-import sys
+from typing import List, Optional
 
 import src.config as config
 import src.db.database as db
@@ -6,7 +6,7 @@ from src.curator import curate_all
 from src.llm.factory import get_llm_provider
 
 
-def run_generation():
+def run_generation(sources: Optional[List[str]] = None, count: int = 3):
     print("--- STEP 1: INITIALIZING DATABASE & RETRIEVING HISTORY ---")
     db.initialize_db()
 
@@ -21,10 +21,13 @@ def run_generation():
         print(f"Loaded Global Preference: '{global_feedback}'")
 
     print("\n--- STEP 2: RUNNING NEWS CURATION PIPELINE ---")
-    # Fetch 2 fresh articles per source (8 total)
-    articles = curate_all(limit_per_source=2)
+    sources_label = ", ".join(sources) if sources else "all configured sources"
+    limit_per_source = max(4, count * 2) if sources else max(2, (count + 7) // 8 + 1)
+    print(f"Curating articles targeting: {sources_label} (limit: {limit_per_source} per source)...")
+
+    articles = curate_all(limit_per_source=limit_per_source, sources=sources)
     if not articles:
-        print("No fresh, unseen articles found today. Curation is up-to-date!")
+        print("No fresh, unseen articles found. Curation is up-to-date!")
         return
 
     print(f"Curated {len(articles)} fresh, unseen articles.")
@@ -38,13 +41,14 @@ def run_generation():
         print(f"Error loading LLM provider: {e}")
         sys.exit(1)
 
-    print("Generating proposals via LLM...")
+    print(f"Generating {count} proposals via LLM...")
     try:
         proposals = provider.generate_proposals(
             articles=articles,
             approved_history=approved_history,
             rejected_history=rejected_history,
             global_feedback=global_feedback,
+            count=count,
         )
     except Exception as e:
         print(f"Generation failed: {e}")
@@ -60,4 +64,25 @@ def run_generation():
 
 
 if __name__ == "__main__":
-    run_generation()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Curate articles and generate LinkedIn post proposals.")
+    parser.add_argument(
+        "--source",
+        "-s",
+        type=str,
+        default=None,
+        help="Target specific source(s), e.g. shopify, netflix, hn, github (comma-separated).",
+    )
+    parser.add_argument(
+        "--count",
+        "-n",
+        "-c",
+        type=int,
+        default=3,
+        help="Number of proposals to generate (default: 3).",
+    )
+    args = parser.parse_args()
+
+    target_sources = [s.strip() for s in args.source.split(",")] if args.source else None
+    run_generation(sources=target_sources, count=args.count)

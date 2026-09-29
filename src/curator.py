@@ -320,32 +320,146 @@ def fetch_netflix_tech(limit: int = 5) -> List[Article]:
     return articles
 
 
-def curate_all(limit_per_source: int = 5) -> List[Article]:
-    """Crates and aggregates unseen technical articles from all configured sources."""
+def fetch_shopify_blog(limit: int = 5) -> List[Article]:
+    """Fetches latest engineering articles from Shopify Engineering Blog Atom feed."""
+    articles = []
+    try:
+        url = "https://shopify.engineering/blog.atom"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return []
+
+        soup = BeautifulSoup(response.text, "xml")
+        entries = soup.find_all("entry")
+
+        for entry in entries[:limit]:
+            title_tag = entry.find("title")
+            link_tag = entry.find("link")
+            id_tag = entry.find("id")
+            summary_tag = entry.find("summary") or entry.find("content")
+            published_tag = entry.find("published") or entry.find("updated")
+
+            if not title_tag:
+                continue
+
+            title = title_tag.get_text().strip()
+            url_str = ""
+            if link_tag:
+                url_str = link_tag.get("href", "").strip() or link_tag.get_text().strip()
+            if not url_str and id_tag:
+                url_str = id_tag.get_text().strip()
+
+            if not url_str:
+                continue
+
+            raw_summary = summary_tag.get_text() if summary_tag else ""
+            summary_soup = BeautifulSoup(raw_summary, "html.parser")
+            summary = summary_soup.get_text().strip()
+            summary = re.sub(r"\s+", " ", summary)
+            if len(summary) > 300:
+                summary = summary[:297] + "..."
+            if not summary:
+                summary = "No description available."
+
+            date_str = published_tag.get_text().strip() if published_tag else None
+
+            articles.append(
+                Article(title=title, url=url_str, source="shopify_blog", summary=summary, score=0.0, date=date_str)
+            )
+    except Exception as e:
+        print(f"Error fetching Shopify Engineering Blog: {e}")
+    return articles
+
+
+SOURCE_ALIASES = {
+    "hn": "hacker_news",
+    "hackernews": "hacker_news",
+    "hacker_news": "hacker_news",
+    "github": "github_trending",
+    "gh": "github_trending",
+    "trending": "github_trending",
+    "github_trending": "github_trending",
+    "arxiv": "arxiv",
+    "papers": "arxiv",
+    "reddit": "reddit",
+    "lobsters": "lobsters",
+    "infoq": "infoq",
+    "netflix": "netflix_tech",
+    "netflix_tech": "netflix_tech",
+    "netflix_blog": "netflix_tech",
+    "shopify": "shopify_blog",
+    "shopify_blog": "shopify_blog",
+    "shopify_engineering": "shopify_blog",
+}
+
+SOURCE_DISPLAY_NAMES = {
+    "hacker_news": "Hacker News",
+    "github_trending": "GitHub Trending",
+    "arxiv": "ArXiv Papers",
+    "reddit": "Reddit",
+    "lobsters": "Lobsters",
+    "infoq": "InfoQ",
+    "netflix_tech": "Netflix Tech Blog",
+    "shopify_blog": "Shopify Engineering",
+}
+
+
+def resolve_source(source_name: str) -> Optional[str]:
+    """Resolves a user-provided source name or alias to its canonical source identifier."""
+    if not source_name:
+        return None
+    normalized = source_name.strip().lower().replace("-", "_").replace(" ", "_")
+    return SOURCE_ALIASES.get(normalized)
+
+
+def get_source_fetchers():
+    """Returns dynamic mapping of canonical source names to fetcher functions."""
+    return {
+        "hacker_news": fetch_hacker_news,
+        "github_trending": fetch_github_trending,
+        "arxiv": fetch_arxiv,
+        "reddit": fetch_reddit,
+        "lobsters": fetch_lobsters,
+        "infoq": fetch_infoq,
+        "netflix_tech": fetch_netflix_tech,
+        "shopify_blog": fetch_shopify_blog,
+    }
+
+
+def curate_all(
+    limit_per_source: int = 5,
+    sources: Optional[List[str]] = None,
+) -> List[Article]:
+    """
+    Curates and aggregates unseen technical articles from configured sources.
+
+    :param limit_per_source: Maximum articles to fetch per active source.
+    :param sources: Optional list of specific source identifiers or aliases to target.
+                    If None or empty, all sources are fetched.
+    """
+    fetchers = get_source_fetchers()
     all_articles = []
 
-    # 1. Fetch from Hacker News
-    all_articles.extend(fetch_hacker_news(limit=limit_per_source))
+    if sources:
+        target_keys = []
+        for s in sources:
+            canonical = resolve_source(s)
+            if canonical and canonical in fetchers:
+                if canonical not in target_keys:
+                    target_keys.append(canonical)
+            else:
+                print(f"Warning: Unknown source '{s}' skipped.")
 
-    # 2. Fetch from GitHub Trending
-    all_articles.extend(fetch_github_trending(limit=limit_per_source))
+        for key in target_keys:
+            all_articles.extend(fetchers[key](limit=limit_per_source))
+    else:
+        for fetcher in fetchers.values():
+            all_articles.extend(fetcher(limit=limit_per_source))
 
-    # 3. Fetch from ArXiv
-    all_articles.extend(fetch_arxiv(limit=limit_per_source))
-
-    # 4. Fetch from Reddit
-    all_articles.extend(fetch_reddit(limit=limit_per_source))
-
-    # 5. Fetch from Lobsters
-    all_articles.extend(fetch_lobsters(limit=limit_per_source))
-
-    # 6. Fetch from InfoQ
-    all_articles.extend(fetch_infoq(limit=limit_per_source))
-
-    # 7. Fetch from Netflix Tech Blog
-    all_articles.extend(fetch_netflix_tech(limit=limit_per_source))
-
-    # 8. Filter duplicates and seen URLs in DB
+    # Filter duplicates and seen URLs in DB
     seen_urls = set()
     fresh_articles = []
 
@@ -364,11 +478,32 @@ def curate_all(limit_per_source: int = 5) -> List[Article]:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run the news & tech article curation pipeline.")
+    parser.add_argument(
+        "--source",
+        "-s",
+        type=str,
+        default=None,
+        help="Target a specific source or comma-separated sources (e.g. shopify, netflix, hn, github).",
+    )
+    parser.add_argument(
+        "--limit",
+        "-l",
+        type=int,
+        default=2,
+        help="Number of articles to fetch per source (default: 2).",
+    )
+    args = parser.parse_args()
+
     print("Initializing Database...")
     db.initialize_db()
 
-    print("Running Daily Tech Curation pipeline (fetching 2 articles per source)...")
-    articles = curate_all(limit_per_source=2)
+    target_sources = [s.strip() for s in args.source.split(",")] if args.source else None
+    sources_label = ", ".join(target_sources) if target_sources else "all configured sources"
+    print(f"Running Tech Curation pipeline for {sources_label} (limit: {args.limit} per source)...")
+    articles = curate_all(limit_per_source=args.limit, sources=target_sources)
 
     print(f"\n--- Curated {len(articles)} Fresh, Unseen Articles ---\n")
     for i, article in enumerate(articles, 1):

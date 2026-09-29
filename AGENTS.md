@@ -62,7 +62,7 @@ Enforces absolute system and budget integrity.
 ### 3. The Curation Agent (`src/curator.py`)
 An automated web-scraping and RSS aggregation microservice.
 * **Responsibilities**:
-  * Connects to standard news and technical APIs: Hacker News JSON Feed, GitHub Trending web layers, ArXiv XML search indexes, and specialized Reddit RSS boards.
+  * Connects to standard news and technical APIs: Hacker News JSON Feed, GitHub Trending web layers, ArXiv XML search indexes, Reddit RSS boards, Lobsters, InfoQ, Netflix Tech Blog, and Shopify Engineering Blog.
   * Extracts metadata: titles, authors, descriptions, repository stars, dates, and origin links.
   * Standardizes diverse API schemes into cohesive, typing-validated `Article` structures.
   * Interfaces with SQLite to filter out any previously processed URLs, guaranteeing only fresh, unique topics are queued.

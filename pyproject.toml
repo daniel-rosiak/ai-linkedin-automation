@@ -25,6 +25,7 @@ combine-as-imports = true
 known-first-party = ["src"]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]

@@ -207,3 +207,155 @@ def test_manual_style_examples_only():
     assert len(detailed) == 2
     assert detailed[0]["content"] == "manual sample 2"
     assert detailed[1]["content"] == "manual sample 1"
+
+
+def test_get_style_examples_limit_5_freshest():
+    db.clear_style_examples()
+    for i in range(1, 8):
+        db.add_style_example(f"sample {i}", type="manual")
+
+    # Default call should return top 5 freshest
+    examples = db.get_style_examples()
+    assert len(examples) == 5
+    # Order should be descending (most recent first)
+    assert examples[0] == "sample 7"
+    assert examples[1] == "sample 6"
+    assert examples[2] == "sample 5"
+    assert examples[3] == "sample 4"
+    assert examples[4] == "sample 3"
+
+
+def test_get_all_history_ordered_by_date_desc():
+    # Insert proposals with explicitly different timestamps and statuses
+    with db.get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO proposals (url, title, source, summary, proposed_title, proposed_angle, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                "https://old-approved.com",
+                "Old Approved Title",
+                "hn",
+                "Summary 1",
+                "PT1",
+                "PA1",
+                "approved",
+                "2026-07-01 10:00:00",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO proposals (url, title, source, summary, proposed_title, proposed_angle, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                "https://mid-rejected.com",
+                "Mid Rejected Title",
+                "reddit",
+                "Summary 2",
+                "PT2",
+                "PA2",
+                "rejected",
+                "2026-08-15 12:00:00",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO proposals (url, title, source, summary, proposed_title, proposed_angle, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                "https://new-pending.com",
+                "New Pending Title",
+                "shopify_blog",
+                "Summary 3",
+                "PT3",
+                "PA3",
+                "pending",
+                "2026-09-29 08:00:00",
+            ),
+        )
+        conn.commit()
+
+    history = db.get_all_history(limit=10)
+    assert len(history) == 3
+
+    # Must be strictly ordered by created_at DESC:
+    # 1. New Pending (2026-09-29)
+    # 2. Mid Rejected (2026-08-15)
+    # 3. Old Approved (2026-07-01)
+    assert history[0].url == "https://new-pending.com"
+    assert history[0].status == "pending"
+    assert history[1].url == "https://mid-rejected.com"
+    assert history[1].status == "rejected"
+    assert history[2].url == "https://old-approved.com"
+    assert history[2].status == "approved"
+
+
+def test_get_all_history_with_status_filter():
+    with db.get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO proposals (url, title, source, summary, proposed_title, proposed_angle, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            ("https://app1.com", "App 1", "hn", "S", "PT", "PA", "approved", "2026-09-01 10:00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO proposals (url, title, source, summary, proposed_title, proposed_angle, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            ("https://app2.com", "App 2", "hn", "S", "PT", "PA", "approved", "2026-09-02 10:00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO proposals (url, title, source, summary, proposed_title, proposed_angle, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            ("https://rej1.com", "Rej 1", "reddit", "S", "PT", "PA", "rejected", "2026-09-03 10:00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO proposals (url, title, source, summary, proposed_title, proposed_angle, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            ("https://pend1.com", "Pend 1", "arxiv", "S", "PT", "PA", "pending", "2026-09-04 10:00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO proposals (url, title, source, summary, proposed_title, proposed_angle, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            ("https://post1.com", "Post 1", "shopify_blog", "S", "PT", "PA", "posted", "2026-09-05 10:00:00"),
+        )
+        conn.commit()
+
+    # Filter by approved
+    approved = db.get_all_history(limit=10, status="approved")
+    assert len(approved) == 2
+    assert approved[0].url == "https://app2.com"  # Newest approved first
+    assert approved[1].url == "https://app1.com"
+
+    # Filter by rejected
+    rejected = db.get_all_history(limit=10, status="rejected")
+    assert len(rejected) == 1
+    assert rejected[0].url == "https://rej1.com"
+
+    # Filter by pending
+    pending = db.get_all_history(limit=10, status="pending")
+    assert len(pending) == 1
+    assert pending[0].url == "https://pend1.com"
+
+    # Filter by posted
+    posted = db.get_all_history(limit=10, status="posted")
+    assert len(posted) == 1
+    assert posted[0].url == "https://post1.com"
+
+    # Filter by all
+    all_items = db.get_all_history(limit=10, status="all")
+    assert len(all_items) == 5
+    assert all_items[0].url == "https://post1.com"  # Most recent
+
+

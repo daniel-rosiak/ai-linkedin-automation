@@ -26,11 +26,12 @@ class OllamaProvider(BaseProvider):
         approved_history: List[Proposal] = None,
         rejected_history: List[Proposal] = None,
         global_feedback: str = None,
+        count: int = 3,
     ) -> List[Proposal]:
         if not articles:
             return []
 
-        prompt = build_proposal_prompt(articles, approved_history, rejected_history, global_feedback)
+        prompt = build_proposal_prompt(articles, approved_history, rejected_history, global_feedback, count=count)
 
         # We enforce JSON mode via format="json" option in Ollama client chat
         response = self.client.chat(model=self.model, messages=[{"role": "user", "content": prompt}], format="json")
@@ -89,7 +90,7 @@ class OllamaProvider(BaseProvider):
                 )
             )
 
-        return proposals
+        return proposals[:count]
 
     def generate_post_text(self, proposal: Proposal, style_examples: List[str] = None) -> str:
         prompt = build_final_post_prompt(proposal, style_examples)

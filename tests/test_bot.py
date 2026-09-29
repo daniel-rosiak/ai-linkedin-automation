@@ -10,7 +10,11 @@ from src.bot import (
     button_callback_handler,
     clear_examples_command,
     example_command,
+    format_generate_help,
+    generate_command,
     history_command,
+    parse_generate_args,
+    parse_history_args,
     preference_command,
     remove_example_command,
     restricted,
@@ -290,7 +294,7 @@ async def test_handle_text_copy_refinement(monkeypatch, mocker):
 
     # DB calls
     mock_get_prop.assert_called_once_with(999)
-    mock_get_samples.assert_called_once_with(limit=3)
+    mock_get_samples.assert_called_once_with(limit=5)
     mock_update_copy.assert_called_once_with(999, "Refined post copy text!")
 
     # LLM call
@@ -670,6 +674,24 @@ async def test_history_command_timeline(monkeypatch, mocker):
 
 
 @pytest.mark.asyncio
+async def test_history_command_custom_limit(monkeypatch, mocker):
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+    mock_get_all_hist = mocker.patch("src.db.database.get_all_history", return_value=[])
+
+    mock_update = Mock()
+    mock_update.effective_chat = Mock(id=12345)
+    mock_update.message = AsyncMock()
+
+    mock_context = Mock()
+    mock_context.args = ["5"]
+
+    await history_command(mock_update, mock_context)
+
+    mock_get_all_hist.assert_called_once_with(limit=5)
+
+
+
+@pytest.mark.asyncio
 async def test_button_callback_handler_retrieve(monkeypatch, mocker):
     monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
     monkeypatch.setattr(config, "POSTS_DIR", "/tmp")
@@ -715,7 +737,7 @@ async def test_button_callback_handler_retrieve(monkeypatch, mocker):
     await button_callback_handler(mock_update, mock_context)
 
     mock_get_prop.assert_called_once_with(888)
-    mock_get_samples.assert_called_once_with(limit=3)
+    mock_get_samples.assert_called_once_with(limit=5)
     mock_update_copy.assert_called_once_with(888, "Full expanded post text copy!")
     mock_provider.generate_post_text.assert_called_once_with(mock_proposal, style_examples=["Sample style"])
 
@@ -806,3 +828,258 @@ async def test_button_callback_handler_retrieve_cached(monkeypatch, mocker):
 
     call_args_2 = mock_context.bot.send_message.call_args_list[1][1]
     assert "Pre-compiled cached copy" in call_args_2["text"]
+
+
+def test_parse_generate_args():
+    assert parse_generate_args([]) == (None, 3, None)
+    assert parse_generate_args(["5"]) == (None, 5, None)
+    assert parse_generate_args(["shopify"]) == (["shopify_blog"], 3, None)
+    assert parse_generate_args(["shopify", "2"]) == (["shopify_blog"], 2, None)
+    assert parse_generate_args(["2", "shopify"]) == (["shopify_blog"], 2, None)
+    assert parse_generate_args(["shopify", "blog", "2"]) == (["shopify_blog"], 2, None)
+    assert parse_generate_args(["netflix,shopify", "4"]) == (["netflix_tech", "shopify_blog"], 4, None)
+    assert parse_generate_args(["--source", "shopify", "--count", "2"]) == (["shopify_blog"], 2, None)
+    assert parse_generate_args(["source=hn", "count=1"]) == (["hacker_news"], 1, None)
+    assert parse_generate_args(["help"]) == (None, 0, "HELP")
+    assert parse_generate_args(["--help"]) == (None, 0, "HELP")
+    assert parse_generate_args(["sources"]) == (None, 0, "HELP")
+
+    sources, count, err = parse_generate_args(["foobar"])
+    assert err is not None
+    assert "Unknown source" in err
+
+    sources, count, err = parse_generate_args(["15"])
+    assert err is not None
+    assert "between 1 and 10" in err
+
+
+@pytest.mark.asyncio
+async def test_generate_command_with_target_source_and_count(mocker, monkeypatch):
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+
+    mock_article = Mock()
+    mock_article.title = "Shopify Performance"
+    mock_article.url = "https://shopify.engineering/perf"
+    mock_article.source = "shopify_blog"
+
+    mock_curate = mocker.patch("src.bot.curate_all", return_value=[mock_article])
+
+    mock_proposal = Proposal(
+        id=None,
+        url="https://shopify.engineering/perf",
+        title="Shopify Performance",
+        source="shopify_blog",
+        summary="Summary",
+        proposed_title="How Shopify Scales",
+        proposed_angle="Angle on scaling",
+        status="pending",
+    )
+    mock_provider = Mock()
+    mock_provider.generate_proposals = Mock(return_value=[mock_proposal])
+    mocker.patch("src.bot.get_llm_provider", return_value=mock_provider)
+
+    mock_status_msg = AsyncMock()
+    mock_update = Mock()
+    mock_update.effective_chat = Mock(id=12345)
+    mock_update.message = AsyncMock()
+    mock_update.message.reply_text = AsyncMock(return_value=mock_status_msg)
+
+    mock_context = Mock()
+    mock_context.args = ["shopify", "2"]
+
+    await generate_command(mock_update, mock_context)
+
+    # Verify curate_all called with target source and limit
+    mock_curate.assert_called_once_with(limit_per_source=4, sources=["shopify_blog"])
+
+    # Verify provider called with count=2
+    mock_provider.generate_proposals.assert_called_once()
+    assert mock_provider.generate_proposals.call_args[1]["count"] == 2
+
+    # Verify status deleted and proposal dispatched
+    mock_status_msg.delete.assert_called_once()
+    assert mock_update.message.reply_text.call_count == 2
+    proposal_card = mock_update.message.reply_text.call_args_list[1][0][0]
+    assert "How Shopify Scales" in proposal_card
+
+
+@pytest.mark.asyncio
+async def test_generate_command_help(mocker, monkeypatch):
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+
+    mock_update = Mock()
+    mock_update.effective_chat = Mock(id=12345)
+    mock_update.message = AsyncMock()
+
+    mock_context = Mock()
+    mock_context.args = ["help"]
+
+    await generate_command(mock_update, mock_context)
+
+    mock_update.message.reply_text.assert_called_once()
+    reply = mock_update.message.reply_text.call_args[0][0]
+    assert "/generate Command Options" in reply
+    assert "Available Sources:" in reply
+
+
+@pytest.mark.asyncio
+async def test_generate_command_invalid_source(mocker, monkeypatch):
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+
+    mock_update = Mock()
+    mock_update.effective_chat = Mock(id=12345)
+    mock_update.message = AsyncMock()
+
+    mock_context = Mock()
+    mock_context.args = ["foobar_channel"]
+
+    await generate_command(mock_update, mock_context)
+
+    mock_update.message.reply_text.assert_called_once()
+    reply = mock_update.message.reply_text.call_args[0][0]
+    assert "Unknown source `foobar_channel`" in reply
+
+
+def test_parse_history_args():
+    # Default (no args)
+    assert parse_history_args([]) == (None, 10, None)
+
+    # Status only
+    assert parse_history_args(["approved"]) == ("approved", 10, None)
+    assert parse_history_args(["/approved"]) == ("approved", 10, None)
+    assert parse_history_args(["rejected"]) == ("rejected", 10, None)
+    assert parse_history_args(["pending"]) == ("pending", 10, None)
+    assert parse_history_args(["skipped"]) == ("skipped", 10, None)
+    assert parse_history_args(["posted"]) == ("posted", 10, None)
+    assert parse_history_args(["all"]) == (None, 10, None)
+
+    # Aliases
+    assert parse_history_args(["approve"]) == ("approved", 10, None)
+    assert parse_history_args(["reject"]) == ("rejected", 10, None)
+    assert parse_history_args(["skip"]) == ("skipped", 10, None)
+    assert parse_history_args(["post"]) == ("posted", 10, None)
+
+    # Status and limit
+    assert parse_history_args(["approved", "5"]) == ("approved", 5, None)
+    assert parse_history_args(["5", "approved"]) == ("approved", 5, None)
+    assert parse_history_args(["--status", "rejected", "--limit", "3"]) == ("rejected", 3, None)
+    assert parse_history_args(["status=pending", "limit=7"]) == ("pending", 7, None)
+
+    # Count only
+    assert parse_history_args(["15"]) == (None, 15, None)
+
+    # Help
+    assert parse_history_args(["help"]) == (None, 0, "HELP")
+    assert parse_history_args(["--help"]) == (None, 0, "HELP")
+
+    # Invalid status
+    status, limit, err = parse_history_args(["invalid_status"])
+    assert err is not None
+    assert "Unknown status `invalid_status`" in err
+
+    # Invalid limit
+    status, limit, err = parse_history_args(["approved", "100"])
+    assert err is not None
+    assert "between 1 and 50" in err
+
+
+@pytest.mark.asyncio
+async def test_history_command_with_status_approved(monkeypatch, mocker):
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+    mock_prop = Proposal(
+        id=10,
+        url="https://app.com",
+        title="Approved Post Title",
+        source="shopify_blog",
+        summary="S",
+        proposed_title="How Shopify Scales",
+        proposed_angle="Architecture angle",
+        status="approved",
+    )
+    mock_get_all_hist = mocker.patch("src.db.database.get_all_history", return_value=[mock_prop])
+
+    mock_update = Mock()
+    mock_update.effective_chat = Mock(id=12345)
+    mock_update.message = AsyncMock()
+
+    mock_context = Mock()
+    mock_context.args = ["approved", "5"]
+
+    await history_command(mock_update, mock_context)
+
+    mock_get_all_hist.assert_called_once_with(limit=5, status="approved")
+    assert mock_update.message.reply_text.call_count == 2
+    header = mock_update.message.reply_text.call_args_list[0][0][0]
+    assert "Approved Posts" in header
+    card = mock_update.message.reply_text.call_args_list[1][0][0]
+    assert "How Shopify Scales" in card
+    assert "🟢 Approved" in card
+
+
+@pytest.mark.asyncio
+async def test_history_command_with_status_rejected(monkeypatch, mocker):
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+    mock_prop = Proposal(
+        id=11,
+        url="https://rej.com",
+        title="Rejected Title",
+        source="hn",
+        summary="S",
+        proposed_title="Rejected Angle",
+        proposed_angle="Why it was rejected",
+        status="rejected",
+    )
+    mock_get_all_hist = mocker.patch("src.db.database.get_all_history", return_value=[mock_prop])
+
+    mock_update = Mock()
+    mock_update.effective_chat = Mock(id=12345)
+    mock_update.message = AsyncMock()
+
+    mock_context = Mock()
+    mock_context.args = ["rejected"]
+
+    await history_command(mock_update, mock_context)
+
+    mock_get_all_hist.assert_called_once_with(limit=10, status="rejected")
+    header = mock_update.message.reply_text.call_args_list[0][0][0]
+    assert "Rejected Proposals" in header
+
+
+@pytest.mark.asyncio
+async def test_history_command_help(monkeypatch, mocker):
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+
+    mock_update = Mock()
+    mock_update.effective_chat = Mock(id=12345)
+    mock_update.message = AsyncMock()
+
+    mock_context = Mock()
+    mock_context.args = ["help"]
+
+    await history_command(mock_update, mock_context)
+
+    mock_update.message.reply_text.assert_called_once()
+    reply = mock_update.message.reply_text.call_args[0][0]
+    assert "/history Command Options" in reply
+    assert "approved" in reply
+    assert "rejected" in reply
+
+
+@pytest.mark.asyncio
+async def test_history_command_invalid_status(monkeypatch, mocker):
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+
+    mock_update = Mock()
+    mock_update.effective_chat = Mock(id=12345)
+    mock_update.message = AsyncMock()
+
+    mock_context = Mock()
+    mock_context.args = ["invalid_state"]
+
+    await history_command(mock_update, mock_context)
+
+    mock_update.message.reply_text.assert_called_once()
+    reply = mock_update.message.reply_text.call_args[0][0]
+    assert "Unknown status `invalid_state`" in reply
+
+

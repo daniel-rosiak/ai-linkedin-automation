@@ -8,35 +8,28 @@ def build_proposal_prompt(
     approved_history: List[Proposal] = None,
     rejected_history: List[Proposal] = None,
     global_feedback: str = None,
+    count: int = 3,
 ) -> str:
-    """Builds a structured prompt for the LLM to generate 3-5 distinct proposals from curated articles and history feedback."""
+    """Builds a structured prompt for the LLM to generate post proposals from curated articles and history feedback."""
+    count = max(1, count)
+    item_word = "proposal" if count == 1 else "proposals"
 
     # 1. Base instructions and format constraint
     prompt = (
         "You are an expert LinkedIn Content Strategist and tech curator.\n"
-        "Review the following curated articles and propose exactly 3 to 5 separate, distinct, highly engaging social post concepts (proposals).\n\n"
+        f"Review the following curated articles and propose exactly {count} separate, distinct, highly engaging social post {item_word} (proposals).\n\n"
         "For each proposal, you MUST assign it to one of the raw articles by matching its 'url'.\n"
         "Each proposal must include:\n"
         "1. 'proposed_title': A compelling, click-worthy hook/title suited for a technical LinkedIn audience.\n"
         "2. 'proposed_angle': A 2-3 sentence concept outlining the key message, tone, and angle of the post.\n"
         "3. 'url': The exact URL of the original article this proposal is based on.\n\n"
-        "CRITICAL: You must output ONLY a valid JSON object containing a 'proposals' array with 3 to 5 separate distinct proposal objects. Match this exact JSON schema format:\n"
+        f"CRITICAL: You must output ONLY a valid JSON object containing a 'proposals' array with exactly {count} distinct proposal object(s). Match this exact JSON schema format:\n"
         "{\n"
         '  "proposals": [\n'
         "    {\n"
         '      "proposed_title": "compelling title/hook for article 1",\n'
         '      "proposed_angle": "the 2-3 sentence description of the concept and tone for article 1",\n'
         '      "url": "the matching original article 1 url"\n'
-        "    },\n"
-        "    {\n"
-        '      "proposed_title": "compelling title/hook for article 2",\n'
-        '      "proposed_angle": "the 2-3 sentence description of the concept and tone for article 2",\n'
-        '      "url": "the matching original article 2 url"\n'
-        "    },\n"
-        "    {\n"
-        '      "proposed_title": "compelling title/hook for article 3",\n'
-        '      "proposed_angle": "the 2-3 sentence description of the concept and tone for article 3",\n'
-        '      "url": "the matching original article 3 url"\n'
         "    }\n"
         "  ]\n"
         "}\n"
@@ -74,7 +67,7 @@ def build_proposal_prompt(
         prompt += f"  - URL: {article.url}\n"
         prompt += f"  - Summary: {article.summary}\n\n"
 
-    prompt += "Generate 3 to 5 unique proposals based on the articles above. Remember, return ONLY raw JSON array. DO NOT wrap in markdown code blocks."
+    prompt += f"Generate exactly {count} unique {item_word} based on the articles above. Remember, return ONLY raw JSON array. DO NOT wrap in markdown code blocks."
     return prompt
 
 
@@ -90,7 +83,7 @@ def build_final_post_prompt(proposal: Proposal, style_examples: List[str] = None
         "- Hook the reader in the first sentence.\n"
         "- Structure with clear paragraphs and line breaks for readability (avoid blocks of dense text).\n"
         "- Explain the technical importance, trade-offs, or insights clearly.\n"
-        "- Keep the tone professional, intellectual, yet highly engaging and accessible.\n"
+        "- Keep the tone professional, intellectual, yet highly engaging and accessible. Mimic tone from the sample posts.\n"
         "- Include 3-5 relevant hashtags at the very bottom (e.g. #softwareengineering, #artificialintelligence, etc.).\n"
         "- Smoothly mention the original link as a resource: " + proposal.url + "\n\n"
         "Return ONLY the markdown-formatted post text. Do not include introductory notes, explanations, or quotes."
