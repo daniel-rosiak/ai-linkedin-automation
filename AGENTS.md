@@ -22,7 +22,7 @@ The **AI LinkedIn Post Generator** is structured as a collection of specialized,
                                   v                             | Hist Preferences
 +-------------------------------------------------+             |
 |                  Curation Agent                 | ------------+
-|                (src/curator.py)                 |
+|                  (src/curator/)                 |
 +-------------------------------------------------+
                                   |
                                   | Curated Fresh Articles
@@ -59,10 +59,10 @@ Enforces absolute system and budget integrity.
   * Audits caller IDs against the strict `ALLOWED_CHAT_ID` integer constraint.
   * Immediately drops unauthorized interactions silently to prevent resource depletion, prompt manipulation, or credential leakage.
 
-### 3. The Curation Agent (`src/curator.py`)
-An automated web-scraping and RSS aggregation microservice.
+### 3. The Curation Agent (`src/curator/`)
+An automated, modular web-scraping and RSS/Atom aggregation engine with abstract fetcher interfaces.
 * **Responsibilities**:
-  * Connects to standard news and technical APIs: Hacker News JSON Feed, GitHub Trending web layers, ArXiv XML search indexes, Reddit RSS boards, Lobsters, InfoQ, Netflix Tech Blog, and Shopify Engineering Blog.
+  * Connects to standard news aggregators and 20 world-class engineering blogs (26 total sources: Hacker News, GitHub Trending, ArXiv, Reddit, Lobsters, InfoQ, Netflix, Cloudflare, Stripe, Shopify, Meta, Uber, Airbnb, GitHub Engineering, Dropbox, Atlassian, Slack, Spotify, LinkedIn, Pinterest, Google Developers, Microsoft, Etsy, Square, Figma, and Stack Overflow).
   * Extracts metadata: titles, authors, descriptions, repository stars, dates, and origin links.
   * Standardizes diverse API schemes into cohesive, typing-validated `Article` structures.
   * Interfaces with SQLite to filter out any previously processed URLs, guaranteeing only fresh, unique topics are queued.

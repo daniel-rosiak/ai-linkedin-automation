@@ -137,7 +137,7 @@ Once your Telegram Bot is live and connected, the following commands are availab
 | Command | Usage / Example | Description |
 | :--- | :--- | :--- |
 | `/start`, `/help` | `/help` | Initial greeting, help manual, and instructions screen listing all commands and usage. |
-| `/generate` | `/generate`<br>`/generate 5`<br>`/generate shopify`<br>`/generate shopify 2`<br>`/generate netflix,shopify 4`<br>`/generate help` | Generates post proposals. Supports targeting a specific source/channel/blog (`shopify`, `netflix`, `hn`, `github`, `arxiv`, `reddit`, `lobsters`, `infoq`) and specifying the exact number of proposals (1–10). |
+| `/generate` | `/generate`<br>`/generate 5`<br>`/generate shopify`<br>`/generate shopify 2`<br>`/generate netflix,cloudflare 4`<br>`/generate help` | Generates post proposals. Supports targeting specific tech sources or blogs (26 total: `hn`, `gh`, `arxiv`, `reddit`, `lobsters`, `infoq`, `netflix`, `cloudflare`, `stripe`, `shopify`, `meta`, `uber`, `airbnb`, `dropbox`, `atlassian`, `slack`, `spotify`, `linkedin`, `pinterest`, `google`, `microsoft`, `etsy`, `square`, `figma`, `stackoverflow`) and specifying proposal count (1–10). |
 | `/preference <text>` | `/preference focus more on technology, software architecture, and high-scale systems.` | Sets overall high-level style or topic rules for future generations. Future curations will semantically filter for topics matching this rule. |
 | `/preference` | `/preference` | Displays your currently active global preference rules. |
 | `/example <text>` | `/example [paste your past post text here]` | Saves one of your previous successful posts to train the AI's Few-Shot style-mimicking model. Future posts will match your tone, formatting, and spacing. |
@@ -146,6 +146,37 @@ Once your Telegram Bot is live and connected, the following commands are availab
 | `/clear_examples` | `/clear_examples` | Deletes all saved past post examples from your style profile. |
 | `/history` | `/history`<br>`/history approved`<br>`/history rejected`<br>`/history pending`<br>`/history skipped`<br>`/history posted`<br>`/history approved 5`<br>`/history help` | Displays proposals ordered chronologically by date descending. Accepts all statuses (`approved`, `rejected`, `pending`, `skipped`, `posted`, `all`) and an optional item limit (1–50, defaults to 10). Cards include interactive action buttons (`Show Fully`, `Refine Copy`, `Approve`, `Reject`, `Skip`, `Feedback`). |
 | `/approved` | `/approved`<br>`/approved 5` | Convenience shortcut for `/history approved`. Displays recent approved posts with instant copy and graphic retrieval buttons. |
+
+### 📰 Supported Sources (26 Channels & Blogs)
+
+| Source Identifier | Display Name / Publication | Focus & Architecture Themes |
+| :--- | :--- | :--- |
+| `hn`, `hackernews` | Hacker News | Real-time tech breakthroughs, startup trends, open source. |
+| `gh`, `trending` | GitHub Trending | Trending repositories across AI, infrastructure, and dev tools. |
+| `arxiv`, `papers` | ArXiv Papers | Computer Science, machine learning, and agentic AI pre-prints. |
+| `reddit` | Reddit Tech & ML | High-signal discussions across r/MachineLearning, r/Python, etc. |
+| `lobsters` | Lobsters | Peer-curated software engineering and systems architecture. |
+| `infoq` | InfoQ | Enterprise architecture, distributed systems, and modern cloud. |
+| `netflix` | Netflix TechBlog | Cloud architecture, video streaming tech, and large-scale data. |
+| `cloudflare`, `cf` | Cloudflare Blog | Networking, DDoS security, edge computing, and web protocols. |
+| `stripe` | Stripe Engineering | API design, fintech payments, and 99.999% high-availability systems. |
+| `shopify` | Shopify Engineering | E-commerce scaling, multi-tenancy, and Ruby/Go architecture. |
+| `meta`, `fb` | Meta Engineering | Hyper-scale infrastructure, PyTorch, AI research, and systems. |
+| `uber` | Uber Engineering | Distributed systems, logistics optimization, mobile, and Go stacks. |
+| `airbnb` | Airbnb Engineering | Frontend architecture, data infrastructure, and machine learning. |
+| `github_engineering` | GitHub Engineering | Git scalability, developer workflows, and enterprise platform security. |
+| `dropbox` | Dropbox Tech Blog | Sync engine design, custom file storage, and kernel performance. |
+| `atlassian` | Atlassian Engineering | Collaboration platforms, agile tool scaling, and Jira cloud. |
+| `slack` | Slack Engineering | Real-time messaging, WebSocket protocols, and client performance. |
+| `spotify` | Spotify Engineering | Audio streaming protocols, agile team scaling, and ML models. |
+| `linkedin` | LinkedIn Engineering | Large-scale graph databases, recommendations, and Kafka data pipelines. |
+| `pinterest` | Pinterest Engineering | Visual search algorithms, Pin serving infrastructure, and graph DBs. |
+| `google`, `google_dev` | Google Developers | Web standards, Android internals, AI models, and cloud tooling. |
+| `microsoft`, `msft` | Microsoft Engineering | Azure cloud internals, Windows platform, and developer tooling. |
+| `etsy` | Etsy Code as Craft | Continuous delivery, engineering culture, and performance metrics. |
+| `square` | Square Corner Blog | Hardware and software integration, terminal payments, and mobile security. |
+| `figma` | Figma Tech Blog | WebGL internals, browser performance, and multiplayer CRDTs. |
+| `stackoverflow`, `so` | Stack Overflow Engineering | Site reliability, database migrations, and community platform design. |
 
 ### 🛠️ Interactive Proposal & Copy Editing
 

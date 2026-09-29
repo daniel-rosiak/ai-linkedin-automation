@@ -16,7 +16,12 @@ from telegram.ext import (
 
 import src.config as config
 import src.db.database as db
-from src.curator import SOURCE_DISPLAY_NAMES, curate_all, resolve_source
+from src.curator import (
+    SOURCE_CATEGORY_MAP,
+    SOURCE_DISPLAY_NAMES,
+    curate_all,
+    resolve_source,
+)
 from src.llm.factory import get_llm_provider
 from src.renderer import render_graphic
 
@@ -531,7 +536,7 @@ def format_generate_help() -> str:
         "• `/generate <source1,source2> <count>` — e.g. `/generate netflix,shopify 4`\n"
         "• `/generate --source shopify --count 2`\n\n"
         f"**Available Sources:**\n{sources_text}\n\n"
-        "💡 *Aliases supported:* `hn`, `hackernews`, `gh`, `trending`, `papers`, `netflix`, `shopify`."
+        "💡 *Aliases supported:* `hn`, `gh`, `papers`, `netflix`, `shopify`, `cloudflare`, `stripe`, `meta`, `uber`, `airbnb`, `slack`, `spotify`, etc."
     )
 
 
@@ -691,17 +696,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 # Save the newly generated text copy inside DB for subsequent fast retrievals
                 db.update_proposal_completed_copy(proposal_id, post_text)
 
-            source_map = {
-                "arxiv": "Arxiv",
-                "hacker_news": "Hacker News",
-                "github_trending": "GitHub Trending",
-                "reddit": "Reddit",
-                "lobsters": "Lobsters",
-                "infoq": "InfoQ",
-                "netflix_tech": "Netflix Tech",
-                "shopify_blog": "Shopify Engineering",
-            }
-            category_str = source_map.get(proposal.source.lower(), proposal.source.replace("_", " ").title())
+            category_str = SOURCE_CATEGORY_MAP.get(proposal.source.lower(), proposal.source.replace("_", " ").title())
 
             image_filename = f"post_{proposal_id}.png"
             image_path = os.path.join(config.POSTS_DIR, image_filename)
@@ -758,17 +753,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             post_text = provider.generate_post_text(proposal, style_examples=style_examples)
 
             # 3. Map category string beautifully
-            source_map = {
-                "arxiv": "Arxiv",
-                "hacker_news": "Hacker News",
-                "github_trending": "GitHub Trending",
-                "reddit": "Reddit",
-                "lobsters": "Lobsters",
-                "infoq": "InfoQ",
-                "netflix_tech": "Netflix Tech",
-                "shopify_blog": "Shopify Engineering",
-            }
-            category_str = source_map.get(proposal.source.lower(), proposal.source.replace("_", " ").title())
+            category_str = SOURCE_CATEGORY_MAP.get(proposal.source.lower(), proposal.source.replace("_", " ").title())
 
             # 3. Create rendering destination path
             image_filename = f"post_{proposal_id}.png"

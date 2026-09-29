@@ -180,16 +180,14 @@ def test_curate_all_success():
     mock_arxiv = [Article(title="T3", url="http://arxiv.org/abs/1", source="arxiv", summary="S3")]
     mock_reddit = [Article(title="T4", url="https://reddit.com/r/ML/1", source="reddit", summary="S4")]
 
-    with (
-        patch("src.curator.fetch_hacker_news", return_value=mock_hn),
-        patch("src.curator.fetch_github_trending", return_value=mock_gh),
-        patch("src.curator.fetch_arxiv", return_value=mock_arxiv),
-        patch("src.curator.fetch_reddit", return_value=mock_reddit),
-        patch("src.curator.fetch_lobsters", return_value=[]),
-        patch("src.curator.fetch_infoq", return_value=[]),
-        patch("src.curator.fetch_netflix_tech", return_value=[]),
-        patch("src.curator.fetch_shopify_blog", return_value=[]),
-    ):
+    mock_fetchers = {
+        "hacker_news": lambda limit: mock_hn,
+        "github_trending": lambda limit: mock_gh,
+        "arxiv": lambda limit: mock_arxiv,
+        "reddit": lambda limit: mock_reddit,
+    }
+
+    with patch("src.curator.get_source_fetchers", return_value=mock_fetchers):
         curated = curate_all(limit_per_source=1)
 
         assert len(curated) == 3
@@ -314,6 +312,27 @@ def test_resolve_source():
     assert resolve_source("reddit") == "reddit"
     assert resolve_source("lobsters") == "lobsters"
     assert resolve_source("infoq") == "infoq"
+    # New engineering blogs
+    assert resolve_source("cloudflare") == "cloudflare_blog"
+    assert resolve_source("cf") == "cloudflare_blog"
+    assert resolve_source("stripe") == "stripe_blog"
+    assert resolve_source("meta") == "meta_engineering"
+    assert resolve_source("facebook") == "meta_engineering"
+    assert resolve_source("uber") == "uber_engineering"
+    assert resolve_source("airbnb") == "airbnb_engineering"
+    assert resolve_source("github_engineering") == "github_engineering"
+    assert resolve_source("dropbox") == "dropbox_tech"
+    assert resolve_source("atlassian") == "atlassian_engineering"
+    assert resolve_source("slack") == "slack_engineering"
+    assert resolve_source("spotify") == "spotify_engineering"
+    assert resolve_source("linkedin") == "linkedin_engineering"
+    assert resolve_source("pinterest") == "pinterest_engineering"
+    assert resolve_source("google") == "google_developers"
+    assert resolve_source("microsoft") == "microsoft_engineering"
+    assert resolve_source("etsy") == "etsy_craft"
+    assert resolve_source("square") == "square_corner"
+    assert resolve_source("figma") == "figma_tech"
+    assert resolve_source("stackoverflow") == "stackoverflow_engineering"
     assert resolve_source("unknown_xyz") is None
     assert resolve_source("") is None
 
@@ -346,5 +365,65 @@ def test_curate_all_with_specific_sources():
         p_shopify.assert_called_once_with(limit=2)
         p_netflix.assert_called_once_with(limit=2)
         p_hn.assert_not_called()
+
+
+def test_fetch_uber_engineering_success():
+    mock_hn_response = Mock()
+    mock_hn_response.status_code = 200
+    mock_hn_response.json.return_value = {
+        "hits": [
+            {
+                "title": "Zero-Growth Stack, Real Gains: Go at Uber",
+                "url": "https://www.uber.com/us/en/blog/zero-growth-stack/",
+                "author": "uber_eng",
+                "created_at": "2026-05-07T12:00:00Z",
+                "points": 340,
+            },
+            {
+                "title": "Random irrelevant story",
+                "url": "https://other.com/story",
+                "author": "someone",
+                "points": 50,
+            },
+        ]
+    }
+
+    with patch("requests.get", return_value=mock_hn_response):
+        from src.curator import fetch_uber_engineering
+
+        articles = fetch_uber_engineering(limit=1)
+        assert len(articles) == 1
+        assert articles[0].title == "Zero-Growth Stack, Real Gains: Go at Uber"
+        assert articles[0].url == "https://www.uber.com/us/en/blog/zero-growth-stack/"
+        assert articles[0].source == "uber_engineering"
+        assert articles[0].score == 340.0
+
+
+def test_fetch_linkedin_engineering_fallback():
+    mock_hn_response = Mock()
+    mock_hn_response.status_code = 200
+    mock_hn_response.json.return_value = {
+        "hits": [
+            {
+                "title": "Reimagining LinkedIn Search Stack",
+                "url": "https://www.linkedin.com/blog/engineering/search/reimagining-linkedins-search-stack",
+                "author": "linkedin_dev",
+                "created_at": "2026-06-01T10:00:00Z",
+                "points": 210,
+            }
+        ]
+    }
+
+    # Simulate Playwright raising exception so it exercises fallback
+    with patch("playwright.sync_api.sync_playwright", side_effect=Exception("Playwright disabled in unit test")):
+        with patch("requests.get", return_value=mock_hn_response):
+            from src.curator import fetch_linkedin_engineering
+
+            articles = fetch_linkedin_engineering(limit=1)
+            assert len(articles) == 1
+            assert articles[0].title == "Reimagining LinkedIn Search Stack"
+            assert "linkedin.com/blog/engineering" in articles[0].url
+            assert articles[0].source == "linkedin_engineering"
+
 
 
