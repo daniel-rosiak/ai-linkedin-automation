@@ -1,84 +1,64 @@
-# System Architecture & Agent Design 🤖
+# Architecture and contributor guide
 
-The **AI LinkedIn Post Generator** is structured as a collection of specialized, highly cohesive **Software Agents** operating under a secure human-in-the-loop coordinator. The codebase maintains strict decoupling between data models, API integrations, and the central event loop.
+This repository is a single Python Telegram bot for curating articles and drafting LinkedIn posts. The components below are modules in one process, not independently deployed agents. A human reviews the drafts and publishes to LinkedIn manually.
 
----
+## Documentation
 
-## 🗺️ Multi-Agent Topology
+- [Product requirements and current scope](docs/product-requirements.md)
+- [Implementation and operations](docs/post-generator.md)
+- [Setup and command examples](README.md)
 
-```
-                  +--------------------------------+
-                  |   User (Telegram Client App)   |
-                  +--------------------------------+
-                                  |
-                                  | Commands & Approvals
-                                  v
-+------------------+     +-------------------+     +-------------------------+
-|  Security Guard  | --> |  Bot Coordinator  | --> |     SQLite Database     |
-|   (Filter Dec)   |     |   (src/bot.py)    |     |   (src/db/database.py)  |
-+------------------+     +-------------------+     +-------------------------+
-                                  |                             ^
-                                  | Trigger                     | Status, Url Cache,
-                                  v                             | Hist Preferences
-+-------------------------------------------------+             |
-|                  Curation Agent                 | ------------+
-|                  (src/curator/)                 |
-+-------------------------------------------------+
-                                  |
-                                  | Curated Fresh Articles
-                                  v
-+-------------------------------------------------+
-|                  LLM Brain Agent                |
-|           (src/llm/providers/base.py)           |
-+-------------------------------------------------+
-                                  |
-                                  | Approved Title/Angle
-                                  v
-+-------------------------------------------------+
-|               Visual Rendering Agent            |
-|               (src/renderer.py)                 |
-+-------------------------------------------------+
+## Components and data flow
+
+```text
+Telegram long polling
+  -> restricted chat-ID check
+  -> bot command/callback handler
+       -> curation -> provider -> proposal cards
+       -> approval -> provider -> saved copy -> text delivery
+                              -> optional renderer -> PNG delivery
+       -> history/retrieval -> saved copy (generate if missing)
+                            -> optional cached PNG (render if missing)
+SQLite stores proposals, preferences, and writing examples.
 ```
 
----
+| Component | Implementation | Responsibility |
+| --- | --- | --- |
+| Coordinator | `src/bot.py` | Commands, callbacks, feedback, approval, retrieval, text/photo delivery, startup validation, long polling |
+| Access check | `restricted` in `src/bot.py` | Compare chat ID with `ALLOWED_CHAT_ID`; reject unauthorized updates before work. Rejected IDs are logged locally. |
+| Curation | `src/curator/` | Fetch and normalize articles, resolve source aliases, deduplicate URLs within the batch and against saved proposals |
+| Provider interface | `src/llm/base.py` | Proposal generation, proposal regeneration, final text, copy refinement |
+| Provider selection | `src/llm/factory.py` | Select Gemini or Ollama using `LLM_PROVIDER` |
+| Editorial guidance | `src/llm/prompts.py`, `src/llm/copywriting.py` | Supply task inputs, history, writing samples, and shared copywriting rules |
+| Storage | `src/db/database.py`, `src/db/models.py` | SQLite persistence and `Article`/`Proposal` dataclasses |
+| Renderer | `src/renderer.py`, `src/templates/graphic.html` | Playwright Chromium screenshot of an HTML template at 1200×630 pixels |
 
-## 🧩 Agent Roles & Responsibilities
+The source registry in `src/curator/__init__.py` contains 26 sources: six aggregators and 20 engineering blogs. Aliases, labels, and feed configuration live in `src/curator/constants.py`. This registry is the source of truth when adding or documenting sources.
 
-### 1. The Bot Coordinator Agent (`src/bot.py`)
-Acts as the central execution scheduler and interface gateway.
-* **Responsibilities**:
-  * Boots up the system event loops and validates environment credentials at startup.
-  * Translates incoming Telegram `/generate` messages into curation commands.
-  * Serializes and dispatches generated proposal cards containing interactive callback keyboard keys.
-  * Dispatches generated technical copy drafts and matching visual PNG graphic files back to the client.
+## Behavioral constraints
 
-### 2. The Security Guard Agent (`src/bot.restricting`)
-Enforces absolute system and budget integrity.
-* **Responsibilities**:
-  * Intercepts all incoming webhook and polling signals.
-  * Audits caller IDs against the strict `ALLOWED_CHAT_ID` integer constraint.
-  * Immediately drops unauthorized interactions silently to prevent resource depletion, prompt manipulation, or credential leakage.
+- Graphics are optional and disabled by default. `GENERATE_GRAPHICS=false` skips both rendering and photo delivery for approval and retrieval, including cached images. `true`, `1`, `yes`, and `on` enable them, case-insensitively after trimming whitespace.
+- Settings are loaded at import/startup through `src/config.py`. Restart the bot after changing `.env` or code. Existing process environment values take precedence over `.env`.
+- `render_graphic()` itself is unconditional. The bot applies the flag; `python -m src.renderer` and the renderer integration test still render directly.
+- Approval generates new copy. Retrieval reuses `completed_copy` when available and calls the provider only if it is missing. With graphics enabled, retrieval reuses `posts/post_<id>.png` if present.
+- Copy is delivered as a preview and a copyable block with a plain-text fallback. Refinement saves the revised copy. “Mark as Posted” changes local status only; it does not publish.
+- Statuses are `pending`, `approved`, `rejected`, `skipped`, and `posted`. SQLite also stores feedback, completed copy, timestamps, global preferences, and manual writing examples. Initialization includes basic schema migrations; do not delete user history as a routine migration step.
+- Proposal generation uses recent positive/rejected history and global preferences. Final copy and refinement use up to five recent manual writing examples. This is prompt conditioning, not model training.
+- Both providers receive the shared runtime adaptation of antislop editorial rules for all four LLM operations. The rules require evidence and internal draft/audit/revise within the same model call. They do not guarantee factual accuracy. Local Codex skill files are not runtime dependencies.
+- Provider calls and curation are synchronous inside asynchronous Telegram handlers. Slow inference or network calls can block bot responsiveness. There is no streaming progress or application-level inference deadline. Telegram HTTP timeouts do not bound LLM generation.
+- Rendering uses Tailwind from a CDN and Google Fonts, so the HTML template is not fully offline or precompiled. No image-generation model is involved.
 
-### 3. The Curation Agent (`src/curator/`)
-An automated, modular web-scraping and RSS/Atom aggregation engine with abstract fetcher interfaces.
-* **Responsibilities**:
-  * Connects to standard news aggregators and 20 world-class engineering blogs (26 total sources: Hacker News, GitHub Trending, ArXiv, Reddit, Lobsters, InfoQ, Netflix, Cloudflare, Stripe, Shopify, Meta, Uber, Airbnb, GitHub Engineering, Dropbox, Atlassian, Slack, Spotify, LinkedIn, Pinterest, Google Developers, Microsoft, Etsy, Square, Figma, and Stack Overflow).
-  * Extracts metadata: titles, authors, descriptions, repository stars, dates, and origin links.
-  * Standardizes diverse API schemes into cohesive, typing-validated `Article` structures.
-  * Interfaces with SQLite to filter out any previously processed URLs, guaranteeing only fresh, unique topics are queued.
+## Development and verification
 
-### 4. The LLM Brain Agent (`src/llm/`)
-Evaluates historical content patterns and handles structured language model tasks.
-* **Responsibilities**:
-  * Queries SQLite history records for positive feedback (previously approved post structures) and negative constraints (rejected posts).
-  * Formulates precise prompts to guide AI topic alignment.
-  * Communicates with active AI backends (**Google Gemini** or local **Ollama** clients) to generate structured post proposals.
-  * Expands short, approved concepts into comprehensive technical drafts, formatting hooks, bullet points, and marketing hashtags.
+Use the project virtual environment from the repository root:
 
-### 5. The Visual Rendering Agent (`src/renderer.py`)
-A fast web-rendering and image-processing agent.
-* **Responsibilities**:
-  * Loads local highly aesthetic HTML files pre-compiled with Tailwind CSS and responsive CSS blurs.
-  * Injects approved titles, subtitles, and category badges directly into the HTML DOM.
-  * Launches headless Playwright browser contexts, waits for stylesheet CDNs and Google Fonts to be painted (`networkidle`), and takes 1200x630 resolution PNG screenshots.
-  * Saves pixel-perfect assets to disk for immediate Telegram media delivery.
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .
+git diff --check
+```
+
+The rendering test launches Chromium and needs installed Playwright browser binaries and permission to launch them. Dependencies are in `requirements.txt`; test and Ruff settings are in `pyproject.toml`. No separate build or type-check target is configured.
+
+Keep `.env`, credentials, SQLite history, and generated assets private. Document public defaults in `.env.example`; do not copy local secrets into documentation. Keep this file and `docs/` aligned with changes to commands, configuration, persistence, or provider behavior.
