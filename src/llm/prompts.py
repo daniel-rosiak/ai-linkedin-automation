@@ -1,6 +1,7 @@
 from typing import List
 
 from src.db.models import Article, Proposal
+from src.llm.copywriting import apply_copywriting_skill
 
 
 def build_proposal_prompt(
@@ -82,8 +83,8 @@ def build_proposal_prompt(
         prompt += f"  - URL: {article.url}\n"
         prompt += f"  - Summary: {article.summary}\n\n"
 
-    prompt += f"Generate exactly {count} unique {item_word} based on the articles above. Remember, return ONLY raw JSON array. DO NOT wrap in markdown code blocks."
-    return prompt
+    prompt += f"Generate exactly {count} unique {item_word} based on the articles above. Return ONLY a raw JSON object containing the 'proposals' array. DO NOT wrap in markdown code blocks."
+    return apply_copywriting_skill(prompt)
 
 
 def build_final_post_prompt(proposal: Proposal, style_examples: List[str] = None) -> str:
@@ -94,6 +95,8 @@ def build_final_post_prompt(proposal: Proposal, style_examples: List[str] = None
         f"Approved Title: {proposal.proposed_title}\n"
         f"Approved Angle: {proposal.proposed_angle}\n"
         f"Original Article URL: {proposal.url}\n\n"
+        f"Source Article Title: {proposal.title}\n"
+        f"Source Article Summary: {proposal.summary}\n\n"
         "--- CRITICAL ANTI-AI-SLOP RULES (STRICTLY FORBIDDEN) ---\n"
         "- NEVER use generic AI buzzwords or corporate filler:\n"
         "  Banned words: 'delve', 'delving', 'revolutionize', 'revolutionizing', 'game-changer', 'game-changing', "
@@ -133,7 +136,7 @@ def build_final_post_prompt(proposal: Proposal, style_examples: List[str] = None
         for i, sample in enumerate(style_examples, 1):
             prompt += f'Writing Sample {i}:\n"""\n{sample}\n"""\n\n'
 
-    return prompt
+    return apply_copywriting_skill(prompt)
 
 
 def build_regeneration_prompt(proposal: Proposal, feedback: str) -> str:
@@ -144,6 +147,8 @@ def build_regeneration_prompt(proposal: Proposal, feedback: str) -> str:
         f"  - Title: {proposal.proposed_title}\n"
         f"  - Concept/Angle: {proposal.proposed_angle}\n"
         f"  - Original Article Link: {proposal.url}\n\n"
+        f"  - Source Article Title: {proposal.title}\n"
+        f"  - Source Article Summary: {proposal.summary}\n\n"
         "The user has reviewed your draft and provided this specific feedback/critique:\n"
         f"  - '{feedback}'\n\n"
         "Your task is to rewrite and refine the proposal's proposed_title and proposed_angle to strictly satisfy their feedback.\n\n"
@@ -157,7 +162,7 @@ def build_regeneration_prompt(proposal: Proposal, feedback: str) -> str:
         "}\n"
         "Do not include any Markdown code block wrapping (such as ```json ... ```), preamble, or postamble text. Return ONLY raw JSON."
     )
-    return prompt
+    return apply_copywriting_skill(prompt)
 
 
 def build_copy_refinement_prompt(current_copy: str, critique: str, style_examples: List[str] = None) -> str:
@@ -185,4 +190,4 @@ def build_copy_refinement_prompt(current_copy: str, critique: str, style_example
         )
         for i, ex in enumerate(style_examples, 1):
             prompt += f'Sample {i}:\n"""\n{ex}\n"""\n\n'
-    return prompt
+    return apply_copywriting_skill(prompt)

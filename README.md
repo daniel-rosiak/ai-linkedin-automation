@@ -4,6 +4,23 @@ A secure, autonomous Telegram Bot that curates top tech news, generates engaging
 
 ---
 
+## Copywriting rules
+
+Both Gemini and Ollama receive a shared runtime adaptation of the antislop core
+and antislop-copywriting skills in `src/llm/copywriting.py`. It applies to proposal
+generation, proposal regeneration, final posts, and copy refinement. Edit that
+module to adjust the editorial guidance; no local Codex skill installation is
+needed when running the bot.
+
+The rules cover evidence, natural phrasing, author voice, and an internal
+draft/audit/revise pass within the existing model call. Writing samples can override
+default style rules, but not factual accuracy or the required response format.
+Article titles and summaries accompany final-post and proposal-revision prompts.
+These are prompt instructions, not an automated factual or style guarantee;
+continue reviewing drafts before publishing.
+
+---
+
 ## 🚀 How to Run Locally
 
 ### 1. Prerequisites
@@ -91,7 +108,7 @@ Once running:
 1. Open your bot on Telegram and type `/start`. If your Telegram Chat ID matches the `ALLOWED_CHAT_ID` env variable, the bot will welcome you. (Unauthorized users are ignored silently).
 2. Send the `/generate` command to kick off news curation and proposal creation.
 3. Review the proposal cards sent to you and tap **Approve 👍**, **Reject 👎**, or **Skip ➡️** directly in Telegram.
-4. Tapping **Approve** will automatically generate the final professional post copy and a beautiful visual graphic card, returning both assets directly to your chat for easy copy-pasting to LinkedIn!
+4. Tapping **Approve** generates the final post copy. Set `GENERATE_GRAPHICS=true` in `.env` to also render and send a 1200×630 PNG graphic. Graphics are disabled by default (`GENERATE_GRAPHICS=false`), including when retrieving saved posts. Restart the bot after changing this setting.
 
 ---
 

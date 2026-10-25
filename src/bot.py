@@ -701,18 +701,21 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 # Save the newly generated text copy inside DB for subsequent fast retrievals
                 db.update_proposal_completed_copy(proposal_id, post_text)
 
-            category_str = SOURCE_CATEGORY_MAP.get(proposal.source.lower(), proposal.source.replace("_", " ").title())
-
-            image_filename = f"post_{proposal_id}.png"
-            image_path = os.path.join(config.POSTS_DIR, image_filename)
-
-            if not os.path.exists(image_path):
-                await render_graphic(
-                    title=proposal.proposed_title,
-                    subtitle=proposal.proposed_angle,
-                    category=category_str,
-                    output_path=image_path,
+            if config.GENERATE_GRAPHICS:
+                category_str = SOURCE_CATEGORY_MAP.get(
+                    proposal.source.lower(), proposal.source.replace("_", " ").title()
                 )
+
+                image_filename = f"post_{proposal_id}.png"
+                image_path = os.path.join(config.POSTS_DIR, image_filename)
+
+                if not os.path.exists(image_path):
+                    await render_graphic(
+                        title=proposal.proposed_title,
+                        subtitle=proposal.proposed_angle,
+                        category=category_str,
+                        output_path=image_path,
+                    )
 
             await status_msg.delete()
 
@@ -743,19 +746,21 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                     reply_markup=reply_markup,
                 )
 
-            with open(image_path, "rb") as f:
-                await context.bot.send_photo(
-                    chat_id=query.message.chat_id, photo=f, caption="🎨 Retrieved Graphic Asset"
-                )
+            if config.GENERATE_GRAPHICS:
+                with open(image_path, "rb") as f:
+                    await context.bot.send_photo(
+                        chat_id=query.message.chat_id, photo=f, caption="🎨 Retrieved Graphic Asset"
+                    )
         except Exception as e:
             logger.error("Error in post retrieval process: %s", e, exc_info=True)
             await context.bot.send_message(chat_id=query.message.chat_id, text=f"❌ Error during asset retrieval: {e}")
     elif action == "approve":
         db.update_proposal_status(proposal_id, "approved")
+        generation_label = (
+            "draft copywriting and social graphics assets" if config.GENERATE_GRAPHICS else "draft copywriting"
+        )
         await query.edit_message_text(
-            f"🟢 **Approved!**\n"
-            f"Title: `{proposal.proposed_title}`\n\n"
-            f"⏳ Generating draft copywriting and social graphics assets..."
+            f"🟢 **Approved!**\nTitle: `{proposal.proposed_title}`\n\n⏳ Generating {generation_label}..."
         )
 
         try:
@@ -766,20 +771,23 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             provider = get_llm_provider()
             post_text = provider.generate_post_text(proposal, style_examples=style_examples)
 
-            # 3. Map category string beautifully
-            category_str = SOURCE_CATEGORY_MAP.get(proposal.source.lower(), proposal.source.replace("_", " ").title())
+            if config.GENERATE_GRAPHICS:
+                # 3. Map category string beautifully
+                category_str = SOURCE_CATEGORY_MAP.get(
+                    proposal.source.lower(), proposal.source.replace("_", " ").title()
+                )
 
-            # 3. Create rendering destination path
-            image_filename = f"post_{proposal_id}.png"
-            image_path = os.path.join(config.POSTS_DIR, image_filename)
+                # 3. Create rendering destination path
+                image_filename = f"post_{proposal_id}.png"
+                image_path = os.path.join(config.POSTS_DIR, image_filename)
 
-            # 4. Invoke Phase 4 Playwright render graphic
-            await render_graphic(
-                title=proposal.proposed_title,
-                subtitle=proposal.proposed_angle,
-                category=category_str,
-                output_path=image_path,
-            )
+                # 4. Invoke Phase 4 Playwright render graphic
+                await render_graphic(
+                    title=proposal.proposed_title,
+                    subtitle=proposal.proposed_angle,
+                    category=category_str,
+                    output_path=image_path,
+                )
 
             # Save completed copywriting text copy inside DB
             db.update_proposal_completed_copy(proposal_id, post_text)
@@ -812,10 +820,11 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 )
 
             # 6. Send rendered PNG graphic to the user
-            with open(image_path, "rb") as f:
-                await context.bot.send_photo(
-                    chat_id=query.message.chat_id, photo=f, caption="🎨 Generated Graphic Asset"
-                )
+            if config.GENERATE_GRAPHICS:
+                with open(image_path, "rb") as f:
+                    await context.bot.send_photo(
+                        chat_id=query.message.chat_id, photo=f, caption="🎨 Generated Graphic Asset"
+                    )
 
             # 7. Update original proposal card to confirm completion with actionable buttons
             completed_card_keyboard = [
@@ -825,11 +834,12 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 ],
                 [InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{proposal_id}")],
             ]
+            completion_label = "Draft copy & graphic asset" if config.GENERATE_GRAPHICS else "Draft copy"
             await query.edit_message_text(
                 f"🟢 **Approved!**\n\n"
                 f"📰 **[{proposal.source.upper()}] {proposal.title}**\n"
                 f"💡 **Title:** `{proposal.proposed_title}`\n\n"
-                f"✅ **Draft copy & graphic asset generated!** (Dispatched below ⬇️)",
+                f"✅ **{completion_label} generated!** (Dispatched below ⬇️)",
                 reply_markup=InlineKeyboardMarkup(completed_card_keyboard),
                 parse_mode="Markdown",
             )

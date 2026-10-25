@@ -2,10 +2,62 @@ import pytest
 
 from src.db.models import Article, Proposal
 from src.llm.base import BaseProvider
+from src.llm.copywriting import COPYWRITING_RULES
 from src.llm.factory import get_llm_provider
 from src.llm.prompts import build_proposal_prompt, build_regeneration_prompt
 from src.llm.providers.gemini import GeminiProvider
 from src.llm.providers.ollama import OllamaProvider
+
+
+@pytest.mark.parametrize("backend", ["gemini", "ollama"])
+@pytest.mark.parametrize("operation", ["proposals", "regenerate", "post", "refine"])
+def test_providers_send_copywriting_skill(mocker, backend, operation):
+    proposal = Proposal(
+        id=1,
+        url="https://example.com/cache",
+        title="Cache invalidation",
+        source="blog",
+        summary="The team replaced a time-based expiry with explicit invalidation.",
+        proposed_title="Choosing cache expiry",
+        proposed_angle="Discuss the invalidation trade-off.",
+        status="pending",
+    )
+    response = '{"proposals": [], "proposed_title": "Updated", "proposed_angle": "Updated angle"}'
+    if backend == "gemini":
+        client = mocker.patch("google.genai.Client").return_value
+        client.models.generate_content.return_value.text = response
+        provider = GeminiProvider(api_key="fake")
+    else:
+        client = mocker.patch("ollama.Client").return_value
+        client.chat.return_value = {"message": {"content": response}}
+        provider = OllamaProvider(host="http://localhost:11434", model="test")
+
+    sample = "I prefer explicit invalidation when freshness matters."
+    if operation == "proposals":
+        provider.generate_proposals([proposal], count=1)
+    elif operation == "regenerate":
+        provider.regenerate_proposal(proposal, "Focus on freshness")
+    elif operation == "post":
+        provider.generate_post_text(proposal, style_examples=[sample])
+    else:
+        provider.refine_post_text("Draft with a source link", "Focus on freshness", style_examples=[sample])
+
+    if backend == "gemini":
+        client.models.generate_content.assert_called_once()
+        prompt = client.models.generate_content.call_args.kwargs["contents"]
+    else:
+        client.chat.assert_called_once()
+        prompt = client.chat.call_args.kwargs["messages"][0]["content"]
+    assert prompt.count(COPYWRITING_RULES) == 1
+    if operation in ("post", "regenerate"):
+        assert proposal.summary in prompt
+        assert proposal.title in prompt
+    if operation in ("post", "refine"):
+        assert sample in prompt
+    if operation in ("regenerate", "refine"):
+        assert "Focus on freshness" in prompt
+    if operation == "proposals":
+        assert "return ONLY raw JSON array" not in prompt
 
 
 def test_provider_subclassing():

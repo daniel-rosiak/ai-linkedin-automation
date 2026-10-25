@@ -25,6 +25,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
 
+# Graphics Settings
+GENERATE_GRAPHICS = os.getenv("GENERATE_GRAPHICS", "false").strip().lower() in {"true", "1", "yes", "on"}
+
 # Storage Settings
 DATABASE_PATH = os.getenv("DATABASE_PATH", "history.db")
 POSTS_DIR = os.getenv("POSTS_DIR", "./posts")

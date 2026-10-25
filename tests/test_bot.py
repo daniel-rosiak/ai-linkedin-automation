@@ -23,6 +23,7 @@ from src.db.models import Proposal
 
 @pytest.fixture(autouse=True)
 def setup_test_db(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GENERATE_GRAPHICS", True)
     # Use a temporary isolated database file for each test
     test_db_file = str(tmp_path / "test_bot_history.db")
     monkeypatch.setattr(db, "DATABASE_PATH", test_db_file)
@@ -1184,3 +1185,53 @@ async def test_button_callback_handler_approve_error_updates_card(monkeypatch, m
     assert "Asset delivery error" in error_call[0][0]
     keyboard = error_call[1]["reply_markup"].inline_keyboard
     assert keyboard[0][0].callback_data == "retrieve_124"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["approve", "retrieve"])
+@pytest.mark.parametrize("cached_image", [False, True])
+async def test_graphics_disabled_preserves_text_delivery(monkeypatch, mocker, action, cached_image):
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+    monkeypatch.setattr(config, "GENERATE_GRAPHICS", False)
+    proposal = Proposal(
+        id=456,
+        url="https://example.com/text-only",
+        title="Example Paper",
+        source="arxiv",
+        summary="A paper abstract",
+        proposed_title="AI Systems",
+        proposed_angle="Integration strategies",
+        status="approved",
+        completed_copy="Saved post text",
+    )
+    mocker.patch("src.db.database.get_proposal", return_value=proposal)
+    mocker.patch("src.db.database.update_proposal_status")
+    save_copy = mocker.patch("src.db.database.update_proposal_completed_copy")
+    mocker.patch("src.db.database.get_style_examples", return_value=[])
+    provider = Mock()
+    provider.generate_post_text.return_value = "Generated post text"
+    mocker.patch("src.bot.get_llm_provider", return_value=provider)
+    render = mocker.patch("src.bot.render_graphic", new_callable=AsyncMock)
+    mocker.patch("src.bot.os.path.exists", return_value=cached_image)
+    open_file = mocker.patch("builtins.open", side_effect=AssertionError("Image must not be opened"))
+    query = AsyncMock()
+    query.data = f"{action}_456"
+    query.message = AsyncMock(chat_id=12345)
+    update = Mock(effective_chat=Mock(id=12345), callback_query=query)
+    context = Mock(bot=AsyncMock())
+
+    await button_callback_handler(update, context)
+
+    render.assert_not_awaited()
+    open_file.assert_not_called()
+    context.bot.send_photo.assert_not_awaited()
+    expected_text = "Generated post text" if action == "approve" else "Saved post text"
+    assert context.bot.send_message.await_count == 2
+    for call in context.bot.send_message.call_args_list:
+        assert expected_text in call.kwargs["text"]
+    if action == "approve":
+        save_copy.assert_called_once_with(456, expected_text)
+        assert "Draft copy generated!" in query.edit_message_text.call_args.args[0]
+        assert "graphic" not in query.edit_message_text.call_args_list[0].args[0]
+    else:
+        provider.generate_post_text.assert_not_called()
