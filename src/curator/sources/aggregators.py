@@ -148,7 +148,9 @@ class ArxivFetcher(BaseSourceFetcher):
 
                 title = re.sub(r"\s+", " ", title_tag.get_text().strip())
                 url_str = id_tag.get_text().strip()
-                summary = re.sub(r"\s+", " ", summary_tag.get_text().strip()) if summary_tag else "No abstract available."
+                summary = (
+                    re.sub(r"\s+", " ", summary_tag.get_text().strip()) if summary_tag else "No abstract available."
+                )
                 published = published_tag.get_text().strip() if published_tag else None
 
                 articles.append(

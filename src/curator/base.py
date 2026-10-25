@@ -78,12 +78,7 @@ class FeedSourceFetcher(BaseSourceFetcher):
                     or item.find("content:encoded")
                     or item.find("content")
                 )
-                pub_tag = (
-                    item.find("pubDate")
-                    or item.find("published")
-                    or item.find("updated")
-                    or item.find("dc:date")
-                )
+                pub_tag = item.find("pubDate") or item.find("published") or item.find("updated") or item.find("dc:date")
 
                 if not title_tag:
                     continue

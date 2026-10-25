@@ -357,5 +357,3 @@ def test_get_all_history_with_status_filter():
     all_items = db.get_all_history(limit=10, status="all")
     assert len(all_items) == 5
     assert all_items[0].url == "https://post1.com"  # Most recent
-
-

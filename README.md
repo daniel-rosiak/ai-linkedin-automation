@@ -41,10 +41,10 @@ source .venv/bin/activate
 #### Step C: Install Dependencies & Headless Browser
 ```bash
 # Install Python packages
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 
 # Install Playwright Chromium binary for social card rendering
-playwright install chromium
+python -m playwright install chromium
 ```
 
 #### Step D: Configure your `.env` File
@@ -78,10 +78,14 @@ POSTS_DIR=./posts
 
 ### 3. Launching the Telegram Bot
 
-Make sure your virtual environment is active (`source .venv/bin/activate`), then start the bot:
+From the project root, start the bot with the virtual environment's Python directly (macOS/Linux). This works without activating the environment:
 ```bash
-python -m src.bot
+.venv/bin/python -m src.bot
 ```
+
+On Windows, use `.venv\Scripts\python.exe -m src.bot`.
+
+If you have activated `.venv` and `python` resolves to its interpreter, `python -m src.bot` is equivalent.
 
 Once running:
 1. Open your bot on Telegram and type `/start`. If your Telegram Chat ID matches the `ALLOWED_CHAT_ID` env variable, the bot will welcome you. (Unauthorized users are ignored silently).
@@ -125,8 +129,8 @@ python -m src.renderer
 
 - **Unauthorized access blocked**: If the bot ignores commands or logs `Unauthorized access blocked from chat ID`, message [@userinfobot](https://t.me/userinfobot) to verify your exact numeric user ID and set it as `ALLOWED_CHAT_ID` in `.env`.
 - **Ollama Connection Refused**: Ensure Ollama is running (`curl http://localhost:11434/api/tags` to test) and the model in `OLLAMA_MODEL` has been pulled with `ollama pull <model_name>`.
-- **Playwright / Browser missing**: If rendering fails, ensure you ran `playwright install chromium`.
-- **Import errors**: Always run modules using `python -m src.<module_name>` with `.venv` activated.
+- **Playwright / Browser missing**: If rendering fails, run `.venv/bin/python -m playwright install chromium` (macOS/Linux).
+- **Missing dependencies (e.g. `No module named 'bs4'`)**: Run `.venv/bin/python -m pip install -r requirements.txt`, then `.venv/bin/python -m src.bot` from the project root (macOS/Linux). On Windows, replace `.venv/bin/python` with `.venv\Scripts\python.exe`. Using the explicit interpreter ensures installation and execution use the same environment.
 
 ---
 

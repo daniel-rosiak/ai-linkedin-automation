@@ -117,7 +117,9 @@ def build_final_post_prompt(proposal: Proposal, style_examples: List[str] = None
         "- Structure with comfortable line breaks and short paragraphs (1-3 sentences each) for effortless reading on mobile screens.\n"
         "- Focus on real substance: architectural decisions, engineering trade-offs, operational costs, and practical lessons (what worked vs what broke).\n"
         "- Use natural language and contractions (it's, that's, don't, we've) for an authentic human cadence.\n"
-        "- Smoothly introduce the original article as an interesting resource (e.g. 'Read the full breakdown: ' or 'Worth checking out: ' followed by " + proposal.url + ").\n"
+        "- Smoothly introduce the original article as an interesting resource (e.g. 'Read the full breakdown: ' or 'Worth checking out: ' followed by "
+        + proposal.url
+        + ").\n"
         "- Include 3-5 clean, relevant technical hashtags at the very bottom (e.g. #softwareengineering #architecture).\n\n"
         "Return ONLY the markdown-formatted post text. Do not include introductory notes, explanations, or quotes."
     )
@@ -184,4 +186,3 @@ def build_copy_refinement_prompt(current_copy: str, critique: str, style_example
         for i, ex in enumerate(style_examples, 1):
             prompt += f'Sample {i}:\n"""\n{ex}\n"""\n\n'
     return prompt
-

@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import sys
@@ -13,6 +14,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 import src.config as config
 import src.db.database as db
@@ -24,6 +26,12 @@ from src.curator import (
 )
 from src.llm.factory import get_llm_provider
 from src.renderer import render_graphic
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
 
 # 1. Authorization Decorator
@@ -307,8 +315,7 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not history:
         if status:
             empty_msg = (
-                f"📚 **No {status} proposals found yet.**\n\n"
-                "Run `/generate` to curate articles and make decisions!"
+                f"📚 **No {status} proposals found yet.**\n\nRun `/generate` to curate articles and make decisions!"
             )
         else:
             empty_msg = (
@@ -522,9 +529,7 @@ def parse_generate_args(args: list[str]):
 
 def format_generate_help() -> str:
     """Builds a formatted guide explaining how to target sources and specify counts."""
-    sources_text = "\n".join(
-        f"• `{key}` — {label}" for key, label in SOURCE_DISPLAY_NAMES.items()
-    )
+    sources_text = "\n".join(f"• `{key}` — {label}" for key, label in SOURCE_DISPLAY_NAMES.items())
     return (
         "📖 **/generate Command Options**\n\n"
         "Generate post proposals targeting specific sources and/or specify the number of items:\n\n"
@@ -701,12 +706,13 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             image_filename = f"post_{proposal_id}.png"
             image_path = os.path.join(config.POSTS_DIR, image_filename)
 
-            await render_graphic(
-                title=proposal.proposed_title,
-                subtitle=proposal.proposed_angle,
-                category=category_str,
-                output_path=image_path,
-            )
+            if not os.path.exists(image_path):
+                await render_graphic(
+                    title=proposal.proposed_title,
+                    subtitle=proposal.proposed_angle,
+                    category=category_str,
+                    output_path=image_path,
+                )
 
             await status_msg.delete()
 
@@ -725,16 +731,24 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await context.bot.send_message(
-                chat_id=query.message.chat_id, text=copy_msg, parse_mode="Markdown", reply_markup=reply_markup
-            )
+            try:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id, text=copy_msg, parse_mode="Markdown", reply_markup=reply_markup
+                )
+            except Exception as md_err:
+                logger.warning("Markdown send failed, falling back to plain text: %s", md_err)
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"📋 Tap the text below to copy your LinkedIn post:\n\n{post_text}",
+                    reply_markup=reply_markup,
+                )
 
             with open(image_path, "rb") as f:
                 await context.bot.send_photo(
                     chat_id=query.message.chat_id, photo=f, caption="🎨 Retrieved Graphic Asset"
                 )
         except Exception as e:
-            print(f"Error in post retrieval process: {e}")
+            logger.error("Error in post retrieval process: %s", e, exc_info=True)
             await context.bot.send_message(chat_id=query.message.chat_id, text=f"❌ Error during asset retrieval: {e}")
     elif action == "approve":
         db.update_proposal_status(proposal_id, "approved")
@@ -785,9 +799,17 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await context.bot.send_message(
-                chat_id=query.message.chat_id, text=copy_msg, parse_mode="Markdown", reply_markup=reply_markup
-            )
+            try:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id, text=copy_msg, parse_mode="Markdown", reply_markup=reply_markup
+                )
+            except Exception as md_err:
+                logger.warning("Markdown send failed, falling back to plain text: %s", md_err)
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"📋 Tap the text below to copy your LinkedIn post:\n\n{post_text}",
+                    reply_markup=reply_markup,
+                )
 
             # 6. Send rendered PNG graphic to the user
             with open(image_path, "rb") as f:
@@ -795,9 +817,44 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                     chat_id=query.message.chat_id, photo=f, caption="🎨 Generated Graphic Asset"
                 )
 
+            # 7. Update original proposal card to confirm completion with actionable buttons
+            completed_card_keyboard = [
+                [
+                    InlineKeyboardButton("Show Fully 📥", callback_data=f"retrieve_{proposal_id}"),
+                    InlineKeyboardButton("Refine Copy ✍️", callback_data=f"refine_copy_{proposal_id}"),
+                ],
+                [InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{proposal_id}")],
+            ]
+            await query.edit_message_text(
+                f"🟢 **Approved!**\n\n"
+                f"📰 **[{proposal.source.upper()}] {proposal.title}**\n"
+                f"💡 **Title:** `{proposal.proposed_title}`\n\n"
+                f"✅ **Draft copy & graphic asset generated!** (Dispatched below ⬇️)",
+                reply_markup=InlineKeyboardMarkup(completed_card_keyboard),
+                parse_mode="Markdown",
+            )
+
         except Exception as e:
-            print(f"Error in post-approval delivery process: {e}")
-            await context.bot.send_message(chat_id=query.message.chat_id, text=f"❌ Error during asset delivery: {e}")
+            logger.error("Error in post-approval delivery process: %s", e, exc_info=True)
+            try:
+                retry_keyboard = [
+                    [InlineKeyboardButton("Show Fully 📥", callback_data=f"retrieve_{proposal_id}")],
+                ]
+                await query.edit_message_text(
+                    f"🟢 **Approved!**\n\n"
+                    f"💡 **Title:** `{proposal.proposed_title}`\n\n"
+                    f"⚠️ Asset delivery error: {e}\n\n"
+                    f"Tap **Show Fully 📥** below to retrieve your generated assets.",
+                    reply_markup=InlineKeyboardMarkup(retry_keyboard),
+                )
+            except Exception:
+                pass
+            try:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id, text=f"❌ Error during asset delivery: {e}"
+                )
+            except Exception:
+                pass
 
 
 @restricted
@@ -848,10 +905,16 @@ async def handle_text_feedback(update: Update, context: ContextTypes.DEFAULT_TYP
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-
-            await update.message.reply_text(copy_msg, reply_markup=reply_markup, parse_mode="Markdown")
+            try:
+                await update.message.reply_text(copy_msg, reply_markup=reply_markup, parse_mode="Markdown")
+            except Exception as md_err:
+                logger.warning("Markdown send failed in refinement, falling back to plain text: %s", md_err)
+                await update.message.reply_text(
+                    f"📋 Tap the text below to copy your refined post:\n\n{refined_text}",
+                    reply_markup=reply_markup,
+                )
         except Exception as e:
-            print(f"Error during copywriting refinement: {e}")
+            logger.error("Error during copywriting refinement: %s", e, exc_info=True)
             await status_msg.edit_text(f"❌ Failed to refine copywriting: {e}")
         return
 
@@ -924,10 +987,17 @@ def main():
             print(f"  - {err}")
         sys.exit(1)
 
-    print("Starting Telegram Bot long-polling...")
+    logger.info("Starting Telegram Bot long-polling...")
     db.initialize_db()
 
-    application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+    request = HTTPXRequest(
+        connection_pool_size=8,
+        connect_timeout=30.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=30.0,
+    )
+    application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).request(request).build()
 
     # Register Commands
     application.add_handler(CommandHandler("start", start_command))

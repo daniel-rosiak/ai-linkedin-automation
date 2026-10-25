@@ -424,6 +424,3 @@ def test_fetch_linkedin_engineering_fallback():
             assert articles[0].title == "Reimagining LinkedIn Search Stack"
             assert "linkedin.com/blog/engineering" in articles[0].url
             assert articles[0].source == "linkedin_engineering"
-
-
-

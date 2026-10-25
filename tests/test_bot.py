@@ -10,7 +10,6 @@ from src.bot import (
     button_callback_handler,
     clear_examples_command,
     example_command,
-    format_generate_help,
     generate_command,
     history_command,
     parse_generate_args,
@@ -690,7 +689,6 @@ async def test_history_command_custom_limit(monkeypatch, mocker):
     mock_get_all_hist.assert_called_once_with(limit=5)
 
 
-
 @pytest.mark.asyncio
 async def test_button_callback_handler_retrieve(monkeypatch, mocker):
     monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
@@ -1086,3 +1084,103 @@ async def test_history_command_invalid_status(monkeypatch, mocker):
     assert "Unknown status `invalid_state`" in reply
 
 
+@pytest.mark.asyncio
+async def test_button_callback_handler_approve_card_update_and_fallback(monkeypatch, mocker):
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+    monkeypatch.setattr(config, "POSTS_DIR", "/tmp")
+
+    mock_proposal = Proposal(
+        id=123,
+        url="https://example.com/item",
+        title="Sample Item",
+        source="slack_engineering",
+        summary="Summary",
+        proposed_title="Proposed Title",
+        proposed_angle="Proposed Angle",
+        status="pending",
+    )
+    mocker.patch("src.db.database.get_proposal", return_value=mock_proposal)
+    mocker.patch("src.db.database.update_proposal_status")
+    mocker.patch("src.db.database.update_proposal_completed_copy")
+    mocker.patch("src.db.database.get_style_examples", return_value=[])
+
+    mock_provider = Mock()
+    mock_provider.generate_post_text = Mock(return_value="Draft post copy")
+    mocker.patch("src.bot.get_llm_provider", return_value=mock_provider)
+    mocker.patch("src.bot.render_graphic", new_callable=AsyncMock)
+    mocker.patch("builtins.open", mocker.mock_open(read_data=b"fake_image_bytes"))
+
+    mock_update = Mock()
+    mock_update.effective_chat = Mock(id=12345)
+    mock_query = AsyncMock()
+    mock_query.data = "approve_123"
+    mock_query.message = Mock(chat_id=12345)
+    mock_update.callback_query = mock_query
+
+    mock_context = Mock()
+    mock_bot = AsyncMock()
+
+    # Simulate markdown failure on the copy message to verify graceful fallback
+    async def side_effect_send_message(*args, **kwargs):
+        if kwargs.get("parse_mode") == "Markdown":
+            raise Exception("Can't parse entities")
+        return AsyncMock()
+
+    mock_bot.send_message.side_effect = side_effect_send_message
+    mock_context.bot = mock_bot
+
+    await button_callback_handler(mock_update, mock_context)
+
+    # Verify query.edit_message_text called twice:
+    # 1. Loading state
+    # 2. Final confirmation card with buttons
+    assert mock_query.edit_message_text.call_count == 2
+    final_card_call = mock_query.edit_message_text.call_args_list[1]
+    assert "Draft copy & graphic asset generated!" in final_card_call[0][0]
+    keyboard = final_card_call[1]["reply_markup"].inline_keyboard
+    assert keyboard[0][0].callback_data == "retrieve_123"
+    assert keyboard[0][1].callback_data == "refine_copy_123"
+    assert keyboard[1][0].callback_data == "posted_123"
+
+
+@pytest.mark.asyncio
+async def test_button_callback_handler_approve_error_updates_card(monkeypatch, mocker):
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+    monkeypatch.setattr(config, "POSTS_DIR", "/tmp")
+
+    mock_proposal = Proposal(
+        id=124,
+        url="https://example.com/item2",
+        title="Sample Item 2",
+        source="slack_engineering",
+        summary="Summary",
+        proposed_title="Proposed Title 2",
+        proposed_angle="Proposed Angle 2",
+        status="pending",
+    )
+    mocker.patch("src.db.database.get_proposal", return_value=mock_proposal)
+    mocker.patch("src.db.database.update_proposal_status")
+    mocker.patch("src.db.database.get_style_examples", return_value=[])
+
+    mock_provider = Mock()
+    mock_provider.generate_post_text.side_effect = RuntimeError("LLM API Timeout")
+    mocker.patch("src.bot.get_llm_provider", return_value=mock_provider)
+
+    mock_update = Mock()
+    mock_update.effective_chat = Mock(id=12345)
+    mock_query = AsyncMock()
+    mock_query.data = "approve_124"
+    mock_query.message = Mock(chat_id=12345)
+    mock_update.callback_query = mock_query
+
+    mock_context = Mock()
+    mock_context.bot = AsyncMock()
+
+    await button_callback_handler(mock_update, mock_context)
+
+    # Verify card was updated with error info and retry button
+    assert mock_query.edit_message_text.call_count == 2
+    error_call = mock_query.edit_message_text.call_args_list[1]
+    assert "Asset delivery error" in error_call[0][0]
+    keyboard = error_call[1]["reply_markup"].inline_keyboard
+    assert keyboard[0][0].callback_data == "retrieve_124"

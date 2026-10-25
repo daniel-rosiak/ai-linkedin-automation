@@ -292,4 +292,3 @@ def test_ollama_generate_proposals_with_count(mocker):
     proposals = provider.generate_proposals(articles, count=1)
     assert len(proposals) == 1
     assert proposals[0].proposed_title == "P1"
-
