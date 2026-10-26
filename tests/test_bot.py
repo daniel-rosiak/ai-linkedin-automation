@@ -398,11 +398,13 @@ async def test_handle_text_feedback(monkeypatch, mocker):
     assert "Refined Angle" in msg_text
     assert "Feedback applied" in msg_text
 
-    # Buttons count checking (4 buttons total: Approve, Reject, Skip, and Feedback)
+    # Buttons count checking (5 buttons total: Approve, Reject, Skip, Synthesize Similar, and Feedback)
     buttons = reply_markup.inline_keyboard
     assert len(buttons) == 2  # 2 rows
     assert len(buttons[0]) == 3  # Approve, Reject, Skip
-    assert len(buttons[1]) == 1  # Feedback
+    assert len(buttons[1]) == 2  # Synthesize Similar, Feedback
+    assert buttons[1][0].callback_data == "synthesize_456"
+    assert buttons[1][1].callback_data == "feedback_456"
 
 
 @pytest.mark.asyncio
@@ -1188,7 +1190,7 @@ async def test_button_callback_handler_approve_error_updates_card(monkeypatch, m
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["approve", "retrieve"])
+@pytest.mark.parametrize("action", ["approve", "retrieve", "synthesize"])
 @pytest.mark.parametrize("cached_image", [False, True])
 async def test_graphics_disabled_preserves_text_delivery(monkeypatch, mocker, action, cached_image):
     monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
@@ -1208,8 +1210,10 @@ async def test_graphics_disabled_preserves_text_delivery(monkeypatch, mocker, ac
     mocker.patch("src.db.database.update_proposal_status")
     save_copy = mocker.patch("src.db.database.update_proposal_completed_copy")
     mocker.patch("src.db.database.get_style_examples", return_value=[])
+    mocker.patch("src.bot.gather_similar_articles", return_value=[])
     provider = Mock()
     provider.generate_post_text.return_value = "Generated post text"
+    provider.generate_synthesized_post_text.return_value = "Synthesized post text"
     mocker.patch("src.bot.get_llm_provider", return_value=provider)
     render = mocker.patch("src.bot.render_graphic", new_callable=AsyncMock)
     mocker.patch("src.bot.os.path.exists", return_value=cached_image)
@@ -1225,7 +1229,12 @@ async def test_graphics_disabled_preserves_text_delivery(monkeypatch, mocker, ac
     render.assert_not_awaited()
     open_file.assert_not_called()
     context.bot.send_photo.assert_not_awaited()
-    expected_text = "Generated post text" if action == "approve" else "Saved post text"
+    if action == "approve":
+        expected_text = "Generated post text"
+    elif action == "synthesize":
+        expected_text = "Synthesized post text"
+    else:
+        expected_text = "Saved post text"
     assert context.bot.send_message.await_count == 2
     for call in context.bot.send_message.call_args_list:
         assert expected_text in call.kwargs["text"]
@@ -1233,5 +1242,142 @@ async def test_graphics_disabled_preserves_text_delivery(monkeypatch, mocker, ac
         save_copy.assert_called_once_with(456, expected_text)
         assert "Draft copy generated!" in query.edit_message_text.call_args.args[0]
         assert "graphic" not in query.edit_message_text.call_args_list[0].args[0]
+    elif action == "synthesize":
+        save_copy.assert_called_once_with(456, expected_text)
     else:
         provider.generate_post_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_button_callback_handler_synthesize(monkeypatch, mocker):
+    from src.db.models import Article
+
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+    monkeypatch.setattr(config, "POSTS_DIR", "/tmp")
+    monkeypatch.setattr(config, "GENERATE_GRAPHICS", True)
+
+    mock_proposal = Proposal(
+        id=901,
+        url="https://netflixtechblog.com/kv-migration",
+        title="Netflix Key-Value Migration",
+        source="netflix_tech",
+        summary="How Netflix migrated Cassandra clusters live.",
+        proposed_title="How Netflix Migrates Cassandra Clusters",
+        proposed_angle="Zero-downtime distributed database migration.",
+        status="pending",
+    )
+    similar_articles = [
+        Article(
+            title="Uber's Cassandra Fleet Upgrade",
+            url="https://uber.com/cassandra-upgrade",
+            source="uber_engineering",
+            summary="Upgrading thousands of nodes with zero downtime.",
+        ),
+        Article(
+            title="Stripe's Sharded Database Migration",
+            url="https://stripe.com/db-migration",
+            source="stripe_blog",
+            summary="Moving petabytes across shards safely.",
+        ),
+    ]
+
+    mock_get_prop = mocker.patch("src.db.database.get_proposal", return_value=mock_proposal)
+    mock_update_status = mocker.patch("src.db.database.update_proposal_status")
+    mock_update_copy = mocker.patch("src.db.database.update_proposal_completed_copy")
+    mock_get_samples = mocker.patch("src.db.database.get_style_examples", return_value=["Concise style"])
+    mock_gather = mocker.patch("src.bot.gather_similar_articles", return_value=similar_articles)
+
+    mock_provider = Mock()
+    mock_provider.generate_synthesized_post_text = Mock(return_value="Combined multi-article LinkedIn post!")
+    mocker.patch("src.bot.get_llm_provider", return_value=mock_provider)
+
+    mock_render = mocker.patch("src.bot.render_graphic", new_callable=AsyncMock)
+    mocker.patch("builtins.open", mocker.mock_open(read_data=b"fake_image_bytes"))
+
+    mock_update = Mock()
+    mock_update.effective_chat = Mock(id=12345)
+
+    mock_query = AsyncMock()
+    mock_query.data = "synthesize_901"
+    mock_query.message = AsyncMock(chat_id=12345)
+    mock_update.callback_query = mock_query
+
+    mock_context = Mock()
+    mock_context.bot = AsyncMock()
+
+    await button_callback_handler(mock_update, mock_context)
+
+    mock_get_prop.assert_called_once_with(901)
+    mock_update_status.assert_called_once_with(901, "approved")
+    mock_gather.assert_called_once_with(mock_proposal, limit=3)
+    mock_get_samples.assert_called_once_with(limit=5)
+    mock_provider.generate_synthesized_post_text.assert_called_once_with(
+        mock_proposal, similar_articles, style_examples=["Concise style"]
+    )
+    mock_update_copy.assert_called_once_with(901, "Combined multi-article LinkedIn post!")
+
+    mock_render.assert_called_once_with(
+        title="How Netflix Migrates Cassandra Clusters",
+        subtitle="Zero-downtime distributed database migration.",
+        category="Netflix Tech",
+        output_path=os.path.join("/tmp", "post_901.png"),
+    )
+
+    # Verify preview message includes combined articles list + synthesized copy
+    assert mock_context.bot.send_message.call_count == 2
+    preview_msg = mock_context.bot.send_message.call_args_list[0][1]["text"]
+    assert "Multi-Article Synthesis (3 articles combined)" in preview_msg
+    assert "Netflix Key-Value Migration" in preview_msg
+    assert "Uber's Cassandra Fleet Upgrade" in preview_msg
+    assert "Stripe's Sharded Database Migration" in preview_msg
+    assert "Combined multi-article LinkedIn post!" in preview_msg
+
+    # Verify copy block message has action buttons including Synthesize Similar
+    copy_call = mock_context.bot.send_message.call_args_list[1][1]
+    assert "Combined multi-article LinkedIn post!" in copy_call["text"]
+    copy_keyboard = copy_call["reply_markup"].inline_keyboard
+    assert copy_keyboard[0][0].callback_data == "refine_copy_901"
+    assert copy_keyboard[0][1].callback_data == "posted_901"
+    assert copy_keyboard[1][0].callback_data == "synthesize_901"
+
+    # Verify card was updated from pending -> approved with full action buttons
+    assert mock_query.edit_message_text.call_count == 1
+    final_card = mock_query.edit_message_text.call_args_list[0]
+    assert "Synthesized copy & graphic asset generated!" in final_card[0][0]
+    card_keyboard = final_card[1]["reply_markup"].inline_keyboard
+    assert card_keyboard[0][0].callback_data == "retrieve_901"
+    assert card_keyboard[0][1].callback_data == "refine_copy_901"
+    assert card_keyboard[1][0].callback_data == "posted_901"
+    assert card_keyboard[1][1].callback_data == "synthesize_901"
+
+
+@pytest.mark.asyncio
+async def test_button_callback_handler_tolerates_expired_query_answer(monkeypatch, mocker):
+    from telegram.error import BadRequest
+
+    monkeypatch.setattr(config, "ALLOWED_CHAT_ID", 12345)
+    mock_proposal = Proposal(
+        id=902,
+        url="https://example.com/article",
+        title="Sample Article",
+        source="hacker_news",
+        summary="Summary",
+        proposed_title="Proposed Title",
+        proposed_angle="Proposed Angle",
+        status="pending",
+    )
+    mocker.patch("src.db.database.get_proposal", return_value=mock_proposal)
+    mock_update_status = mocker.patch("src.db.database.update_proposal_status")
+
+    mock_query = AsyncMock()
+    mock_query.answer.side_effect = BadRequest("Query is too old and response timeout expired or query id is invalid")
+    mock_query.data = "skip_902"
+    mock_query.message = AsyncMock(chat_id=12345)
+
+    mock_update = Mock(effective_chat=Mock(id=12345), callback_query=mock_query)
+    mock_context = Mock(bot=AsyncMock())
+
+    await button_callback_handler(mock_update, mock_context)
+
+    mock_update_status.assert_called_once_with(902, "skipped")
+    mock_query.edit_message_text.assert_called_once()

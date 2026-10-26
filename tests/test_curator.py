@@ -424,3 +424,148 @@ def test_fetch_linkedin_engineering_fallback():
             assert articles[0].title == "Reimagining LinkedIn Search Stack"
             assert "linkedin.com/blog/engineering" in articles[0].url
             assert articles[0].source == "linkedin_engineering"
+
+
+@pytest.mark.asyncio
+async def test_fetch_linkedin_engineering_inside_asyncio_loop():
+    import asyncio
+
+    from src.curator import fetch_linkedin_engineering
+
+    # Verify that when sync_playwright is invoked inside fetch_linkedin_engineering while an
+    # asyncio event loop is active in the caller thread, it runs in a worker thread with NO running loop.
+    def fake_sync_playwright():
+        try:
+            asyncio.get_running_loop()
+            raise AssertionError("It looks like you are using Playwright Sync API inside the asyncio loop.")
+        except RuntimeError:
+            pass
+
+        ctx = Mock()
+        browser = Mock()
+        page = Mock()
+        page.evaluate.return_value = [
+            {
+                "title": "Scaling LinkedIn's Graph Database",
+                "url": "https://www.linkedin.com/blog/engineering/data/scaling-graph-db",
+            }
+        ]
+        browser.new_page.return_value = page
+        ctx.chromium.launch.return_value = browser
+        cm = Mock()
+        cm.__enter__ = Mock(return_value=ctx)
+        cm.__exit__ = Mock(return_value=False)
+        return cm
+
+    with patch("playwright.sync_api.sync_playwright", side_effect=fake_sync_playwright):
+        articles = fetch_linkedin_engineering(limit=1)
+        assert len(articles) == 1
+        assert articles[0].title == "Scaling LinkedIn's Graph Database"
+        assert articles[0].url == "https://www.linkedin.com/blog/engineering/data/scaling-graph-db"
+        assert articles[0].source == "linkedin_engineering"
+
+
+def test_find_similar_articles_ranks_and_deduplicates():
+    from src.curator import find_similar_articles
+    from src.db.models import Proposal
+
+    target = Proposal(
+        id=1,
+        url="https://netflixtechblog.com/cassandra-migration",
+        title="Netflix Cassandra Key-Value Store Migration",
+        source="netflix_tech",
+        summary="Migrating distributed Cassandra clusters with zero downtime and strict latency SLOs.",
+        proposed_title="How Netflix Migrates Cassandra Clusters",
+        proposed_angle="Zero-downtime distributed database migration lessons.",
+        status="approved",
+    )
+
+    candidates = [
+        # Exact same URL as target -> should be excluded
+        Article(
+            title="Netflix Cassandra Key-Value Store Migration",
+            url="https://netflixtechblog.com/cassandra-migration",
+            source="netflix_tech",
+            summary="Same article",
+        ),
+        # High similarity (distributed database / Cassandra migration)
+        Article(
+            title="Zero-Downtime Cassandra Cluster Upgrades at Uber",
+            url="https://uber.com/cassandra-upgrades",
+            source="uber_engineering",
+            summary="How Uber upgrades distributed Cassandra clusters while maintaining latency SLOs.",
+        ),
+        # Duplicate URL of the high-similarity candidate -> should be deduplicated
+        Article(
+            title="Zero-Downtime Cassandra Cluster Upgrades at Uber (Duplicate)",
+            url="https://uber.com/cassandra-upgrades",
+            source="hacker_news",
+            summary="Duplicate link",
+        ),
+        # Medium similarity (database migration / latency)
+        Article(
+            title="Stripe's Zero-Downtime Database Migration Engine",
+            url="https://stripe.com/blog/db-migration",
+            source="stripe_blog",
+            summary="Moving petabytes across shards without breaking API latency.",
+        ),
+        # Unrelated topic
+        Article(
+            title="CSS Grid Layout Techniques for Mobile",
+            url="https://example.com/css-grid",
+            source="infoq",
+            summary="Styling responsive web interfaces with modern CSS.",
+        ),
+    ]
+
+    similar = find_similar_articles(target, candidates, limit=2)
+    assert len(similar) == 2
+    assert similar[0].url == "https://uber.com/cassandra-upgrades"
+    assert similar[1].url == "https://stripe.com/blog/db-migration"
+
+
+def test_gather_similar_articles_combines_db_and_curated():
+    from src.curator import gather_similar_articles
+    from src.db.models import Proposal
+
+    target = Proposal(
+        id=10,
+        url="https://cloudflare.com/rust-proxy",
+        title="Replacing Nginx with a Rust Proxy at Cloudflare",
+        source="cloudflare_blog",
+        summary="Memory safety and tail latency improvements with Pingora in Rust.",
+        proposed_title="Why Cloudflare Replaced Nginx with Rust",
+        proposed_angle="Tail latency and memory safety in edge proxies.",
+        status="approved",
+    )
+
+    saved_prop = Proposal(
+        id=9,
+        url="https://dropbox.tech/rust-sync",
+        title="Rewriting our Sync Engine in Rust",
+        source="dropbox_tech",
+        summary="Improving memory safety and tail latency in Dropbox desktop clients.",
+        proposed_title="Dropbox's Rust Rewrite",
+        proposed_angle="Rust in production.",
+        status="approved",
+    )
+
+    fresh_article = Article(
+        title="Discord Switched from Go to Rust for Read States",
+        url="https://discord.com/rust-read-states",
+        source="hacker_news",
+        summary="Eliminating GC latency spikes with Rust memory management.",
+    )
+
+    with (
+        patch("src.db.database.get_all_history", return_value=[target, saved_prop]) as mock_hist,
+        patch("src.curator.similarity.curate_all", return_value=[fresh_article]) as mock_curate,
+    ):
+        results = gather_similar_articles(target, limit=2, limit_per_source=1)
+        mock_hist.assert_called_once_with(limit=50)
+        mock_curate.assert_called_once_with(limit_per_source=1)
+        assert len(results) == 2
+        urls = {a.url for a in results}
+        assert "https://dropbox.tech/rust-sync" in urls
+        assert "https://discord.com/rust-read-states" in urls
+        assert "https://cloudflare.com/rust-proxy" not in urls

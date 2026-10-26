@@ -11,6 +11,7 @@ from src.llm.prompts import (
     build_final_post_prompt,
     build_proposal_prompt,
     build_regeneration_prompt,
+    build_synthesized_post_prompt,
 )
 
 
@@ -128,5 +129,15 @@ class GeminiProvider(BaseProvider):
 
     def refine_post_text(self, current_copy: str, critique: str, style_examples: List[str] = None) -> str:
         prompt = build_copy_refinement_prompt(current_copy, critique, style_examples)
+        response = self.client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
+        return response.text.strip()
+
+    def generate_synthesized_post_text(
+        self,
+        proposal: Proposal,
+        similar_articles: List[Article],
+        style_examples: List[str] = None,
+    ) -> str:
+        prompt = build_synthesized_post_prompt(proposal, similar_articles, style_examples)
         response = self.client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
         return response.text.strip()

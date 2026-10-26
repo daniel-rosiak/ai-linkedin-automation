@@ -139,6 +139,72 @@ def build_final_post_prompt(proposal: Proposal, style_examples: List[str] = None
     return apply_copywriting_skill(prompt)
 
 
+def build_synthesized_post_prompt(
+    proposal: Proposal,
+    similar_articles: List[Article],
+    style_examples: List[str] = None,
+) -> str:
+    """Builds a prompt for synthesizing a primary proposal and related articles into a combined multi-source LinkedIn post."""
+    prompt = (
+        "You are an experienced software engineer and authentic technical writer.\n"
+        "Your task is to write a single, natural, human LinkedIn post that synthesizes insights from a primary approved article "
+        "alongside related technical articles, connecting the shared engineering theme, trade-offs, or industry pattern:\n\n"
+        "--- PRIMARY APPROVED ARTICLE ---\n"
+        f"Approved Title: {proposal.proposed_title}\n"
+        f"Approved Angle: {proposal.proposed_angle}\n"
+        f"Primary Article URL: {proposal.url}\n"
+        f"Primary Article Title: {proposal.title}\n"
+        f"Primary Article Summary: {proposal.summary}\n\n"
+    )
+
+    if similar_articles:
+        prompt += "--- RELATED ARTICLES TO SYNTHESIZE & COMBINE ---\n"
+        for i, article in enumerate(similar_articles, 1):
+            prompt += (
+                f"Related Article {i}:\n"
+                f"  - Title: {article.title}\n"
+                f"  - Source: {article.source}\n"
+                f"  - URL: {article.url}\n"
+                f"  - Summary: {article.summary}\n\n"
+            )
+    else:
+        prompt += "--- RELATED ARTICLES ---\nNo additional related articles were matched; focus on the primary article above.\n\n"
+
+    prompt += (
+        "--- CRITICAL ANTI-AI-SLOP RULES (STRICTLY FORBIDDEN) ---\n"
+        "- NEVER use generic AI buzzwords or corporate filler:\n"
+        "  Banned words: 'delve', 'delving', 'revolutionize', 'revolutionizing', 'game-changer', 'game-changing', "
+        "'testament', 'tapestry', 'landscape', 'pivotal', 'beacon', 'foster', 'harness', 'supercharge', 'unleash', "
+        "'skyrocket', 'demystify', 'spearhead', 'realm', 'plethora', 'cutting-edge', 'groundbreaking', 'ever-evolving', "
+        "'paradigm shift', 'deep dive'.\n"
+        "- NEVER use cliché AI rhetorical openings or tropes:\n"
+        "  * 'In today's fast-paced world / digital landscape...'\n"
+        "  * 'Imagine a world where...' or 'Sounds like science fiction? Think again.'\n"
+        "  * 'Here's the kicker:' or 'Let's unpack this:' or 'Buckle up:'\n"
+        "  * 'Discover how...' or 'Witness the future of...'\n"
+        "  * 'It's not just X, it's a testament to Y.'\n"
+        "- NO hyper-enthusiastic cheerleader tone or excessive exclamation points.\n"
+        "--- SYNTHESIS & LENGTH GUIDELINES ---\n"
+        "- Total post length must be concise and scannable: strictly between 120 and 220 words maximum (about 3 to 5 short paragraphs).\n"
+        "- Connect concrete technical takeaways across the primary article and the related articles (what patterns, trade-offs, or engineering lessons emerge when looking at them together).\n"
+        "- Include the primary article link ("
+        + proposal.url
+        + ") and the links to the related articles you reference so readers can explore the sources.\n"
+        "- Include 3-5 clean, relevant technical hashtags at the very bottom (e.g. #softwareengineering #architecture).\n\n"
+        "Return ONLY the markdown-formatted post text. Do not include introductory notes, explanations, or quotes."
+    )
+
+    if style_examples:
+        prompt += (
+            "\n\n--- REFERENCE WRITING SAMPLES (MIMIC THIS AUTHOR'S VOICE & CONCISE BREVITY EXACTLY) ---\n"
+            "Deconstruct, analyze, and mimic this user's tone, voice, paragraph layouts, line-spacing, and messaging style EXACTLY:\n\n"
+        )
+        for i, sample in enumerate(style_examples, 1):
+            prompt += f'Writing Sample {i}:\n"""\n{sample}\n"""\n\n'
+
+    return apply_copywriting_skill(prompt)
+
+
 def build_regeneration_prompt(proposal: Proposal, feedback: str) -> str:
     """Builds a prompt for rewriting and refining an existing proposal based on custom user feedback critiques."""
     prompt = (

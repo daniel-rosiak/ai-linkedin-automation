@@ -12,8 +12,9 @@ The application runs as one Python process with Telegram long polling. `src/bot.
 | `src/curator/base.py` | Fetcher interfaces, RSS/Atom parsing, HTML-summary cleanup |
 | `src/curator/sources/` | Aggregator, engineering-blog, and custom fetchers |
 | `src/curator/service.py` | Sequential fetching, source selection, and URL deduplication |
+| `src/curator/similarity.py` | Keyword/bigram/category similarity ranking across saved history and curated feeds |
 | `src/curator/constants.py` | Source aliases, display names, feed URLs, category labels |
-| `src/llm/base.py` | Abstract interface for the four generation/refinement operations |
+| `src/llm/base.py` | Abstract interface for the five generation/synthesis/refinement operations |
 | `src/llm/providers/` | Gemini via `google-genai`; Ollama via the `ollama` client |
 | `src/llm/prompts.py` | Task prompts, source context, history, feedback, and writing samples |
 | `src/llm/copywriting.py` | Shared editorial rules applied to every prompt builder |
@@ -34,7 +35,7 @@ The application runs as one Python process with Telegram long polling. `src/bot.
 | `/history [status] [count]` | Browse history; default 10, range 1–50 |
 | `/approved [count]` | Browse approved posts |
 
-Proposal buttons approve, reject, skip, or request written feedback. Saved-post controls retrieve assets, refine copy, and mark a post as posted. Pending feedback/refinement state lives in Telegram `context.user_data`, not SQLite, and is lost on restart.
+Proposal buttons approve (`Approve 👍`), synthesize with related articles (`Synthesize Similar 🔗`), reject, skip, or request written feedback. Saved-post controls retrieve assets, synthesize with related articles, refine copy, and mark a post as posted. Pending feedback/refinement state lives in Telegram `context.user_data`, not SQLite, and is lost on restart.
 
 ## Generation and delivery
 
@@ -44,15 +45,16 @@ Proposal buttons approve, reject, skip, or request written feedback. Saved-post 
 
 The registry contains six aggregators and 20 blogs. Consult `get_source_fetchers()` in `src/curator/__init__.py` and `/generate help` for the current list. Dataclasses in `src/db/models.py` normalize articles and proposals; they do not provide runtime schema validation.
 
-### Approval
+### Approval and multi-article synthesis
 
-1. Mark the proposal `approved` and show a generation status message.
-2. Load up to five recent manual style examples and request full text from the provider.
-3. If graphics are enabled, render `POSTS_DIR/post_<id>.png` with the proposed title, angle, and source category.
-4. Save `completed_copy`, then deliver a preview and a copyable text block. Fall back to plain text if Markdown delivery fails.
-5. If enabled, send the PNG. Update the proposal card with retrieval, refinement, and posted-status controls.
+1. Mark the proposal `approved` (unless already `posted`) and show a generation status message.
+2. For single-article approval (`Approve 👍`), load up to five recent manual style examples and request full text from the provider via `generate_post_text()`.
+3. For multi-article synthesis (`Synthesize Similar 🔗`), call `gather_similar_articles()` to rank up to three related articles from recent SQLite proposals and curated feeds, then request synthesized text via `generate_synthesized_post_text()`.
+4. If graphics are enabled, render `POSTS_DIR/post_<id>.png` with the proposed title, angle, and source category.
+5. Save `completed_copy`, then deliver a preview (including the list of combined articles when synthesized) and a copyable text block. Fall back to plain text if Markdown delivery fails.
+6. If enabled, send the PNG. Update the proposal card with retrieval, synthesis, refinement, and posted-status controls.
 
-Rendering currently precedes saving the completed copy in approval. A rendering failure can therefore leave the proposal approved without saved text. Error handling offers retrieval as a recovery action.
+Rendering currently precedes saving the completed copy in approval and synthesis. A rendering failure can therefore leave the proposal approved without saved text. Error handling offers retrieval or synthesis as a recovery action.
 
 ### Retrieval and refinement
 

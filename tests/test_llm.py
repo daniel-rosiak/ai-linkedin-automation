@@ -4,13 +4,13 @@ from src.db.models import Article, Proposal
 from src.llm.base import BaseProvider
 from src.llm.copywriting import COPYWRITING_RULES
 from src.llm.factory import get_llm_provider
-from src.llm.prompts import build_proposal_prompt, build_regeneration_prompt
+from src.llm.prompts import build_proposal_prompt, build_regeneration_prompt, build_synthesized_post_prompt
 from src.llm.providers.gemini import GeminiProvider
 from src.llm.providers.ollama import OllamaProvider
 
 
 @pytest.mark.parametrize("backend", ["gemini", "ollama"])
-@pytest.mark.parametrize("operation", ["proposals", "regenerate", "post", "refine"])
+@pytest.mark.parametrize("operation", ["proposals", "regenerate", "post", "synthesize", "refine"])
 def test_providers_send_copywriting_skill(mocker, backend, operation):
     proposal = Proposal(
         id=1,
@@ -22,6 +22,14 @@ def test_providers_send_copywriting_skill(mocker, backend, operation):
         proposed_angle="Discuss the invalidation trade-off.",
         status="pending",
     )
+    similar = [
+        Article(
+            title="Distributed Cache Leases",
+            url="https://example.com/leases",
+            source="meta_engineering",
+            summary="Using leases to prevent thundering herds during cache invalidation.",
+        )
+    ]
     response = '{"proposals": [], "proposed_title": "Updated", "proposed_angle": "Updated angle"}'
     if backend == "gemini":
         client = mocker.patch("google.genai.Client").return_value
@@ -39,6 +47,8 @@ def test_providers_send_copywriting_skill(mocker, backend, operation):
         provider.regenerate_proposal(proposal, "Focus on freshness")
     elif operation == "post":
         provider.generate_post_text(proposal, style_examples=[sample])
+    elif operation == "synthesize":
+        provider.generate_synthesized_post_text(proposal, similar, style_examples=[sample])
     else:
         provider.refine_post_text("Draft with a source link", "Focus on freshness", style_examples=[sample])
 
@@ -49,10 +59,14 @@ def test_providers_send_copywriting_skill(mocker, backend, operation):
         client.chat.assert_called_once()
         prompt = client.chat.call_args.kwargs["messages"][0]["content"]
     assert prompt.count(COPYWRITING_RULES) == 1
-    if operation in ("post", "regenerate"):
+    if operation in ("post", "synthesize", "regenerate"):
         assert proposal.summary in prompt
         assert proposal.title in prompt
-    if operation in ("post", "refine"):
+    if operation == "synthesize":
+        assert similar[0].title in prompt
+        assert similar[0].url in prompt
+        assert similar[0].summary in prompt
+    if operation in ("post", "synthesize", "refine"):
         assert sample in prompt
     if operation in ("regenerate", "refine"):
         assert "Focus on freshness" in prompt
@@ -344,3 +358,38 @@ def test_ollama_generate_proposals_with_count(mocker):
     proposals = provider.generate_proposals(articles, count=1)
     assert len(proposals) == 1
     assert proposals[0].proposed_title == "P1"
+
+
+def test_build_synthesized_post_prompt():
+    prop = Proposal(
+        id=42,
+        url="https://stripe.com/idempotency",
+        title="Designing Robust Idempotency Keys",
+        source="stripe_blog",
+        summary="How Stripe guarantees exactly-once payment side effects across retries.",
+        proposed_title="Why Idempotency Keys Fail in Production",
+        proposed_angle="Practical failure modes in distributed payment systems.",
+        status="approved",
+    )
+    similar = [
+        Article(
+            title="Uber's Distributed Payment Ledger",
+            url="https://uber.com/ledger",
+            source="uber_engineering",
+            summary="Using immutable ledger entries to prevent duplicate charges.",
+        ),
+        Article(
+            title="Airbnb's Payment Orchestration",
+            url="https://airbnb.io/payments",
+            source="airbnb_engineering",
+            summary="Handling network timeouts with state machines.",
+        ),
+    ]
+    prompt = build_synthesized_post_prompt(prop, similar, style_examples=["Write concisely."])
+    assert "Designing Robust Idempotency Keys" in prompt
+    assert "https://stripe.com/idempotency" in prompt
+    assert "Uber's Distributed Payment Ledger" in prompt
+    assert "https://uber.com/ledger" in prompt
+    assert "Airbnb's Payment Orchestration" in prompt
+    assert "https://airbnb.io/payments" in prompt
+    assert "Write concisely." in prompt

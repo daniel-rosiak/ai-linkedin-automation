@@ -204,7 +204,8 @@ Once your Telegram Bot is live and connected, the following commands are availab
 In addition to the commands, the bot supports two conversational interactive feedback loops:
 
 1. **Proposal Card Buttons**:
-   - **`Approve 👍`**: finalizes the concept, expands into full copywriting draft, renders a custom high-res PNG card, and dispatches both sequentially.
+   - **`Approve 👍`**: finalizes the concept as a single-article post, expands into full copywriting draft, optionally renders a custom high-res PNG card, and dispatches the results.
+   - **`Synthesize Similar 🔗`**: finds up to 3 related articles across saved history and curated tech feeds, then drafts a synthesized post combining data and source links from multiple articles. Also available on approved/retrieved posts in `/history` and `/approved`.
    - **`Reject 👎`**: marks the concept rejected. The LLM remembers this as a negative constraint for future suggestions.
    - **`Skip ➡️`**: skips the item and cleans up the message card.
    - **`Feedback 💬`**: triggers a text critique prompt, allowing you to type adjustments (e.g. *"make it more technical"*) to immediately rewrite the card.

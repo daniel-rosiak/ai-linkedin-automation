@@ -15,6 +15,7 @@ from src.curator.constants import (
     resolve_source,
 )
 from src.curator.service import CurationService, curate_all
+from src.curator.similarity import find_similar_articles, gather_similar_articles
 from src.curator.sources.aggregators import (
     ArxivFetcher,
     GitHubTrendingFetcher,
@@ -107,6 +108,8 @@ __all__ = [
     # Service & Pipeline
     "CurationService",
     "curate_all",
+    "find_similar_articles",
+    "gather_similar_articles",
     # Aggregator Classes & Functions
     "HackerNewsFetcher",
     "GitHubTrendingFetcher",

@@ -22,6 +22,7 @@ from src.curator import (
     SOURCE_CATEGORY_MAP,
     SOURCE_DISPLAY_NAMES,
     curate_all,
+    gather_similar_articles,
     resolve_source,
 )
 from src.llm.factory import get_llm_provider
@@ -358,18 +359,27 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     InlineKeyboardButton("Show Fully 📥", callback_data=f"retrieve_{item.id}"),
                     InlineKeyboardButton("Refine Copy ✍️", callback_data=f"refine_copy_{item.id}"),
                 ],
-                [InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{item.id}")],
+                [
+                    InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{item.id}"),
+                    InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{item.id}"),
+                ],
                 [
                     InlineKeyboardButton("Reject 👎", callback_data=f"reject_{item.id}"),
                     InlineKeyboardButton("Skip ➡️", callback_data=f"skip_{item.id}"),
                 ],
             ]
         elif status_lower == "posted":
-            keyboard = [[InlineKeyboardButton("Show Fully 📥", callback_data=f"retrieve_{item.id}")]]
+            keyboard = [
+                [
+                    InlineKeyboardButton("Show Fully 📥", callback_data=f"retrieve_{item.id}"),
+                    InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{item.id}"),
+                ]
+            ]
         elif status_lower == "rejected":
             keyboard = [
                 [
                     InlineKeyboardButton("Approve 👍", callback_data=f"approve_{item.id}"),
+                    InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{item.id}"),
                     InlineKeyboardButton("Skip ➡️", callback_data=f"skip_{item.id}"),
                 ]
             ]
@@ -377,6 +387,7 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [
                 [
                     InlineKeyboardButton("Approve 👍", callback_data=f"approve_{item.id}"),
+                    InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{item.id}"),
                     InlineKeyboardButton("Reject 👎", callback_data=f"reject_{item.id}"),
                 ]
             ]
@@ -387,7 +398,10 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     InlineKeyboardButton("Reject 👎", callback_data=f"reject_{item.id}"),
                     InlineKeyboardButton("Skip ➡️", callback_data=f"skip_{item.id}"),
                 ],
-                [InlineKeyboardButton("Feedback 💬", callback_data=f"feedback_{item.id}")],
+                [
+                    InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{item.id}"),
+                    InlineKeyboardButton("Feedback 💬", callback_data=f"feedback_{item.id}"),
+                ],
             ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -422,7 +436,10 @@ async def approved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("Show Fully 📥", callback_data=f"retrieve_{item.id}"),
                 InlineKeyboardButton("Refine Copy ✍️", callback_data=f"refine_copy_{item.id}"),
             ],
-            [InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{item.id}")],
+            [
+                InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{item.id}"),
+                InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{item.id}"),
+            ],
             [
                 InlineKeyboardButton("Reject 👎", callback_data=f"reject_{item.id}"),
                 InlineKeyboardButton("Skip ➡️", callback_data=f"skip_{item.id}"),
@@ -623,7 +640,10 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     InlineKeyboardButton("Reject 👎", callback_data=f"reject_{p.id}"),
                     InlineKeyboardButton("Skip ➡️", callback_data=f"skip_{p.id}"),
                 ],
-                [InlineKeyboardButton("Feedback 💬", callback_data=f"feedback_{p.id}")],
+                [
+                    InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{p.id}"),
+                    InlineKeyboardButton("Feedback 💬", callback_data=f"feedback_{p.id}"),
+                ],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -641,10 +661,13 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes clicks on Approve, Reject, and Skip keyboard buttons."""
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception as e:
+        logger.warning("Could not answer callback query (possibly expired): %s", e)
 
     data = query.data
-    match = re.match(r"^(approve|reject|skip|feedback|retrieve|refine_copy|posted)_(\d+)$", data)
+    match = re.match(r"^(approve|synthesize|reject|skip|feedback|retrieve|refine_copy|posted)_(\d+)$", data)
     if not match:
         return
 
@@ -724,13 +747,14 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 chat_id=query.message.chat_id, text=f"📝 **Formatted Preview:**\n\n{post_text}"
             )
 
-            # 2. Send one-tap copy block message with Refine Copy & Mark as Posted buttons
+            # 2. Send one-tap copy block message with Refine Copy, Synthesize Similar & Mark as Posted buttons
             copy_msg = f"📋 **Tap the block below to copy your LinkedIn post in one click:**\n\n```\n{post_text}\n```"
             keyboard = [
                 [
                     InlineKeyboardButton("Refine Copy ✍️", callback_data=f"refine_copy_{proposal_id}"),
                     InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{proposal_id}"),
-                ]
+                ],
+                [InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{proposal_id}")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -754,6 +778,120 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         except Exception as e:
             logger.error("Error in post retrieval process: %s", e, exc_info=True)
             await context.bot.send_message(chat_id=query.message.chat_id, text=f"❌ Error during asset retrieval: {e}")
+    elif action == "synthesize":
+        was_unapproved = proposal.status.lower() not in ("approved", "posted")
+        if proposal.status.lower() != "posted":
+            db.update_proposal_status(proposal_id, "approved")
+
+        status_msg = await query.message.reply_text(
+            f"🔍 Finding similar articles and synthesizing multi-article post for `{proposal.proposed_title}`..."
+        )
+        try:
+            # 1. Gather top related articles across DB history and curated sources
+            similar_articles = gather_similar_articles(proposal, limit=3)
+
+            # 2. Load personal style samples (up to 5 freshest)
+            style_examples = db.get_style_examples(limit=5)
+
+            # 3. Generate synthesized copywriting
+            provider = get_llm_provider()
+            post_text = provider.generate_synthesized_post_text(
+                proposal, similar_articles, style_examples=style_examples
+            )
+
+            if config.GENERATE_GRAPHICS:
+                category_str = SOURCE_CATEGORY_MAP.get(
+                    proposal.source.lower(), proposal.source.replace("_", " ").title()
+                )
+                image_filename = f"post_{proposal_id}.png"
+                image_path = os.path.join(config.POSTS_DIR, image_filename)
+                await render_graphic(
+                    title=proposal.proposed_title,
+                    subtitle=proposal.proposed_angle,
+                    category=category_str,
+                    output_path=image_path,
+                )
+
+            # Save the synthesized copy inside DB
+            db.update_proposal_completed_copy(proposal_id, post_text)
+
+            await status_msg.delete()
+
+            # Build summary of combined articles
+            sources_lines = [f"• [Primary: {proposal.source.upper()}] {proposal.title} ({proposal.url})"]
+            for sim in similar_articles:
+                sources_lines.append(f"• [{sim.source.upper()}] {sim.title} ({sim.url})")
+            sources_summary = "\n".join(sources_lines)
+
+            preview_text = (
+                f"🔗 **Multi-Article Synthesis ({1 + len(similar_articles)} articles combined):**\n"
+                f"{sources_summary}\n\n"
+                f"📝 **Formatted Preview:**\n\n{post_text}"
+            )
+            await context.bot.send_message(chat_id=query.message.chat_id, text=preview_text)
+
+            copy_msg = f"📋 **Tap the block below to copy your LinkedIn post in one click:**\n\n```\n{post_text}\n```"
+            keyboard = [
+                [
+                    InlineKeyboardButton("Refine Copy ✍️", callback_data=f"refine_copy_{proposal_id}"),
+                    InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{proposal_id}"),
+                ],
+                [InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{proposal_id}")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            try:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id, text=copy_msg, parse_mode="Markdown", reply_markup=reply_markup
+                )
+            except Exception as md_err:
+                logger.warning("Markdown send failed, falling back to plain text: %s", md_err)
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"📋 Tap the text below to copy your LinkedIn post:\n\n{post_text}",
+                    reply_markup=reply_markup,
+                )
+
+            if config.GENERATE_GRAPHICS:
+                with open(image_path, "rb") as f:
+                    await context.bot.send_photo(
+                        chat_id=query.message.chat_id, photo=f, caption="🎨 Generated Graphic Asset"
+                    )
+
+            if was_unapproved:
+                completed_card_keyboard = [
+                    [
+                        InlineKeyboardButton("Show Fully 📥", callback_data=f"retrieve_{proposal_id}"),
+                        InlineKeyboardButton("Refine Copy ✍️", callback_data=f"refine_copy_{proposal_id}"),
+                    ],
+                    [
+                        InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{proposal_id}"),
+                        InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{proposal_id}"),
+                    ],
+                ]
+                completion_label = (
+                    "Synthesized copy & graphic asset" if config.GENERATE_GRAPHICS else "Synthesized copy"
+                )
+                try:
+                    await query.edit_message_text(
+                        f"🟢 **Approved (Multi-Article Synthesis)!**\n\n"
+                        f"📰 **[{proposal.source.upper()}] {proposal.title}**\n"
+                        f"💡 **Title:** `{proposal.proposed_title}`\n\n"
+                        f"✅ **{completion_label} generated!** (Dispatched below ⬇️)",
+                        reply_markup=InlineKeyboardMarkup(completed_card_keyboard),
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error("Error in multi-article synthesis process: %s", e, exc_info=True)
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=query.message.chat_id, text=f"❌ Error during multi-article synthesis: {e}"
+            )
     elif action == "approve":
         db.update_proposal_status(proposal_id, "approved")
         generation_label = (
@@ -797,13 +935,14 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 chat_id=query.message.chat_id, text=f"📝 **Formatted Preview:**\n\n{post_text}"
             )
 
-            # 2. Send one-tap copy block message with Refine Copy & Mark as Posted buttons
+            # 2. Send one-tap copy block message with Refine Copy, Synthesize Similar & Mark as Posted buttons
             copy_msg = f"📋 **Tap the block below to copy your LinkedIn post in one click:**\n\n```\n{post_text}\n```"
             keyboard = [
                 [
                     InlineKeyboardButton("Refine Copy ✍️", callback_data=f"refine_copy_{proposal_id}"),
                     InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{proposal_id}"),
-                ]
+                ],
+                [InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{proposal_id}")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -832,7 +971,10 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                     InlineKeyboardButton("Show Fully 📥", callback_data=f"retrieve_{proposal_id}"),
                     InlineKeyboardButton("Refine Copy ✍️", callback_data=f"refine_copy_{proposal_id}"),
                 ],
-                [InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{proposal_id}")],
+                [
+                    InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{proposal_id}"),
+                    InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{proposal_id}"),
+                ],
             ]
             completion_label = "Draft copy & graphic asset" if config.GENERATE_GRAPHICS else "Draft copy"
             await query.edit_message_text(
@@ -848,7 +990,10 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             logger.error("Error in post-approval delivery process: %s", e, exc_info=True)
             try:
                 retry_keyboard = [
-                    [InlineKeyboardButton("Show Fully 📥", callback_data=f"retrieve_{proposal_id}")],
+                    [
+                        InlineKeyboardButton("Show Fully 📥", callback_data=f"retrieve_{proposal_id}"),
+                        InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{proposal_id}"),
+                    ],
                 ]
                 await query.edit_message_text(
                     f"🟢 **Approved!**\n\n"
@@ -906,13 +1051,14 @@ async def handle_text_feedback(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"🔄 **REFINED LINKEDIN POST (Preview)**\n\n{refined_text}\n\n💬 *Critique applied: '{feedback_text}'*"
             )
 
-            # 2. Send one-tap copy block message with Refine Copy & Mark as Posted buttons
+            # 2. Send one-tap copy block message with Refine Copy, Synthesize Similar & Mark as Posted buttons
             copy_msg = f"📋 **Tap the block below to copy your refined post in one click:**\n\n```\n{refined_text}\n```"
             keyboard = [
                 [
                     InlineKeyboardButton("Refine Copy ✍️", callback_data=f"refine_copy_{refinement_id}"),
                     InlineKeyboardButton("Mark as Posted 🚀", callback_data=f"posted_{refinement_id}"),
-                ]
+                ],
+                [InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{refinement_id}")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             try:
@@ -975,7 +1121,10 @@ async def handle_text_feedback(update: Update, context: ContextTypes.DEFAULT_TYP
                 InlineKeyboardButton("Reject 👎", callback_data=f"reject_{proposal_id}"),
                 InlineKeyboardButton("Skip ➡️", callback_data=f"skip_{proposal_id}"),
             ],
-            [InlineKeyboardButton("Feedback 💬", callback_data=f"feedback_{proposal_id}")],
+            [
+                InlineKeyboardButton("Synthesize Similar 🔗", callback_data=f"synthesize_{proposal_id}"),
+                InlineKeyboardButton("Feedback 💬", callback_data=f"feedback_{proposal_id}"),
+            ],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 

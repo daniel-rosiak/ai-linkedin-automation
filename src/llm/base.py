@@ -31,3 +31,13 @@ class BaseProvider(ABC):
     def refine_post_text(self, current_copy: str, critique: str, style_examples: List[str] = None) -> str:
         """Iteratively rewrites and edits final copywriting text using specific user feedback."""
         pass
+
+    @abstractmethod
+    def generate_synthesized_post_text(
+        self,
+        proposal: Proposal,
+        similar_articles: List[Article],
+        style_examples: List[str] = None,
+    ) -> str:
+        """Synthesizes an approved proposal and related articles into a combined multi-source LinkedIn post."""
+        pass

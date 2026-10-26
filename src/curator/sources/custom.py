@@ -1,3 +1,5 @@
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import List
 
 import requests
@@ -53,46 +55,64 @@ class LinkedInEngineeringFetcher(BaseSourceFetcher):
 
     source_name = "linkedin_engineering"
 
+    @staticmethod
+    def _scrape_with_playwright() -> List[dict]:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto("https://engineering.linkedin.com/blog", wait_until="domcontentloaded", timeout=12000)
+            page.wait_for_timeout(2000)
+            cards = page.evaluate(
+                """() => {
+                const res = [];
+                document.querySelectorAll('a').forEach(a => {
+                    const h = a.querySelector('h3, h4, h5') || a;
+                    const text = (h.innerText || '').trim();
+                    const href = a.href || '';
+                    if (href.includes('/blog/engineering/') && !href.endsWith('/engineering') && text.length > 20) {
+                        const parts = href.replace('https://', '').replace('http://', '').split('/').filter(Boolean);
+                        if (parts.length >= 5 && !res.some(r => r.url === href)) {
+                            res.push({title: text, url: href});
+                        }
+                    }
+                });
+                return res;
+            }"""
+            )
+            browser.close()
+            return cards
+
     def fetch(self, limit: int = 5) -> List[Article]:
         articles = []
-        # Primary: Playwright scraper for official blog index
+        # Primary: Playwright scraper for official blog index.
+        # Run in a separate worker thread when called inside a running asyncio event loop
+        # so Playwright's sync API does not conflict with the event loop.
         try:
-            from playwright.sync_api import sync_playwright
+            try:
+                asyncio.get_running_loop()
+                in_running_loop = True
+            except RuntimeError:
+                in_running_loop = False
 
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                page = browser.new_page()
-                page.goto("https://engineering.linkedin.com/blog", wait_until="domcontentloaded", timeout=12000)
-                page.wait_for_timeout(2000)
-                cards = page.evaluate(
-                    """() => {
-                    const res = [];
-                    document.querySelectorAll('a').forEach(a => {
-                        const h = a.querySelector('h3, h4, h5') || a;
-                        const text = (h.innerText || '').trim();
-                        const href = a.href || '';
-                        if (href.includes('/blog/engineering/') && !href.endsWith('/engineering') && text.length > 20) {
-                            const parts = href.replace('https://', '').replace('http://', '').split('/').filter(Boolean);
-                            if (parts.length >= 5 && !res.some(r => r.url === href)) {
-                                res.push({title: text, url: href});
-                            }
-                        }
-                    });
-                    return res;
-                }"""
-                )
-                browser.close()
-                for c in cards[:limit]:
-                    articles.append(
-                        Article(
-                            title=c["title"],
-                            url=c["url"],
-                            source=self.source_name,
-                            summary="Engineering and infrastructure insights from LinkedIn Engineering.",
-                            score=0.0,
-                            date=None,
-                        )
+            if in_running_loop:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    cards = executor.submit(self._scrape_with_playwright).result()
+            else:
+                cards = self._scrape_with_playwright()
+
+            for c in cards[:limit]:
+                articles.append(
+                    Article(
+                        title=c["title"],
+                        url=c["url"],
+                        source=self.source_name,
+                        summary="Engineering and infrastructure insights from LinkedIn Engineering.",
+                        score=0.0,
+                        date=None,
                     )
+                )
         except Exception as e:
             print(f"Playwright scraping for LinkedIn Engineering failed ({e}), using Algolia fallback...")
 
